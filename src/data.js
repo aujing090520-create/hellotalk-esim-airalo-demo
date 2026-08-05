@@ -2,23 +2,8 @@ export const STORE_KEY = 'hellotalk-esim-airalo-demo-v2';
 
 export const defaultData = {
   profile: {
-    name: 'Yiyi',
-    email: 'yiyi@hellotalk.com',
-    language: '简体中文',
     deviceSupport: 'supported',
     onboardingCompleted: false,
-    subscribePromptSeen: false,
-    trustedDevices: [
-      { id: 'device-current', name: 'iPhone 15 Pro', detail: '当前设备 · 最近使用', current: true, trusted: true },
-    ],
-    savedCards: [
-      { id: 'card-demo', brand: 'Visa', last4: '4242', expiry: '12/28', default: true },
-    ],
-    notificationPreference: {
-      marketing: false,
-      esimUsage: true,
-      productUpdates: false,
-    },
   },
   destinations: [
     { id: 'japan', name: '日本', flag: '🇯🇵', type: 'local', catalogId: 'cat-japan', enabled: true },
@@ -73,19 +58,10 @@ export const defaultData = {
   ],
   orders: [],
   esims: [],
-  ledger: [
-    { id: 'seed-reward', type: 'redeem_code', amount: 3, status: 'available', source: '欢迎奖励', createdAt: '2026-08-04T09:00:00.000Z' },
-  ],
-  loyalty: { tier: '旅行者', totalSpend: 0, cashbackRate: 0.05, nextTierThreshold: 50 },
   settings: {
-    onboardingEnabled: true,
-    subscribeSheetEnabled: true,
-    cashbackDelay: 'instant',
-    notificationCopy: '通过电子邮件接收优惠、eSIM 使用提示和流量提醒。',
     homeCards: [
       { id: 'unlimited', title: '不限流量，轻松出行', copy: '需要持续连接时，优先查看不限流量套餐与适用规则。', action: 'store-unlimited', enabled: true, theme: 'sun' },
       { id: 'regional', title: '一次覆盖多个目的地', copy: '跨国行程可从区域和全球套餐中选择覆盖范围。', action: 'store-regional', enabled: true, theme: 'map' },
-      { id: 'loyalty', title: '旅行越多，回馈越多', copy: '通过订单累计消费，并查看会员返现与余额。', action: 'wallet', enabled: true, theme: 'loyalty' },
     ],
   },
 };
@@ -108,34 +84,42 @@ export function hydrateData(storedData) {
   if (!storedData || typeof storedData !== 'object') return defaults;
   const storedProfile = storedData.profile || {};
   const storedSettings = storedData.settings || {};
-  const { referral: _referral, ...storedWithoutReferral } = storedData;
-  const { welcomeCard: _welcomeCard, referralReward: _referralReward, ...storedSettingsWithoutReferral } = storedSettings;
+  const {
+    referral: _referral,
+    ledger: _ledger,
+    loyalty: _loyalty,
+    ...storedWithoutRemovedFeatures
+  } = storedData;
+  const {
+    welcomeCard: _welcomeCard,
+    referralReward: _referralReward,
+    onboardingEnabled: _onboardingEnabled,
+    subscribeSheetEnabled: _subscribeSheetEnabled,
+    cashbackDelay: _cashbackDelay,
+    notificationCopy: _notificationCopy,
+    ...storedSettingsWithoutRemovedFeatures
+  } = storedSettings;
   return {
     ...defaults,
-    ...storedWithoutReferral,
+    ...storedWithoutRemovedFeatures,
     profile: {
       ...defaults.profile,
-      ...storedProfile,
-      notificationPreference: {
-        ...defaults.profile.notificationPreference,
-        ...(storedProfile.notificationPreference || {}),
-      },
-      trustedDevices: storedProfile.trustedDevices || defaults.profile.trustedDevices,
-      savedCards: storedProfile.savedCards || defaults.profile.savedCards,
+      deviceSupport: ['unknown', 'supported', 'unsupported'].includes(storedProfile.deviceSupport)
+        ? storedProfile.deviceSupport
+        : defaults.profile.deviceSupport,
+      onboardingCompleted: Boolean(storedProfile.onboardingCompleted),
     },
     destinations: mergeRecords(defaults.destinations, storedData.destinations),
     catalogs: mergeRecords(defaults.catalogs, storedData.catalogs),
     skus: mergeRecords(defaults.skus, storedData.skus),
     settings: {
       ...defaults.settings,
-      ...storedSettingsWithoutReferral,
+      ...storedSettingsWithoutRemovedFeatures,
       homeCards: mergeRecords(defaults.settings.homeCards, storedSettings.homeCards)
         .filter((card) => defaults.settings.homeCards.some((defaultCard) => defaultCard.id === card.id)),
     },
-    orders: storedData.orders || defaults.orders,
-    esims: storedData.esims || defaults.esims,
-    ledger: storedData.ledger || defaults.ledger,
-    loyalty: { ...defaults.loyalty, ...(storedData.loyalty || {}) },
+    orders: Array.isArray(storedData.orders) ? storedData.orders : defaults.orders,
+    esims: Array.isArray(storedData.esims) ? storedData.esims : defaults.esims,
   };
 }
 
@@ -149,12 +133,6 @@ export function getDestination(data, id) {
 
 export function getSku(data, id) {
   return data.skus.find((sku) => sku.id === id);
-}
-
-export function availableMoney(data) {
-  return data.ledger
-    .filter((entry) => entry.status === 'available')
-    .reduce((sum, entry) => sum + entry.amount, 0);
 }
 
 export function money(value) {
