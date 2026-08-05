@@ -9,7 +9,6 @@ import {
   ChevronRight,
   CircleHelp,
   ClipboardList,
-  Copy,
   CreditCard,
   Download,
   Globe2,
@@ -27,7 +26,6 @@ import {
   ReceiptText,
   Search,
   Settings2,
-  Share2,
   ShieldCheck,
   ShoppingBag,
   Signal,
@@ -40,7 +38,6 @@ import {
   Trash2,
   UserCog,
   UserRound,
-  UsersRound,
   WalletCards,
   Wifi,
   X,
@@ -68,12 +65,12 @@ const RULES = {
   'FR-A03': { title: '目的地与套餐', pages: ['destination', 'plan'] },
   'FR-A04': { title: '结算与支付', pages: ['checkout', 'payment', 'success'] },
   'FR-A05': { title: '我的 eSIM', pages: ['my-esims', 'esim-detail', 'install', 'connect'] },
-  'FR-A06': { title: '个人资料与权益', pages: ['profile', 'wallet', 'referral', 'notifications', 'orders'] },
+  'FR-A06': { title: '个人资料与权益', pages: ['profile', 'wallet', 'notifications', 'orders'] },
   'FR-A07': { title: '商店与目的地配置', pages: ['admin-destinations'] },
   'FR-A08': { title: '目录与 SKU 配置', pages: ['admin-catalog'] },
   'FR-A09': { title: '订单与生命周期测试', pages: ['admin-orders'] },
   'FR-A10': { title: 'HelloMoney 与会员', pages: ['admin-wallet'] },
-  'FR-A11': { title: '推荐与通知配置', pages: ['admin-growth'] },
+  'FR-A11': { title: '通知配置', pages: ['admin-growth'] },
   'FR-A12': { title: '双向 Review', pages: ['admin-review'] },
 };
 
@@ -333,7 +330,6 @@ function PhoneCanvas(props) {
         {page === 'connect' && <ConnectPage {...props} />}
         {page === 'profile' && <ProfilePage {...props} />}
         {page === 'wallet' && <WalletPage {...props} />}
-        {page === 'referral' && <ReferralPage {...props} />}
         {page === 'inbox' && <InboxPage {...props} />}
         {page === 'notifications' && <NotificationPage {...props} />}
         {page === 'orders' && <OrdersPage {...props} />}
@@ -375,7 +371,7 @@ function StorePage(props) {
   const entries = current.ids.map((id) => getDestination(data, id)).filter(Boolean).filter((d) => d.enabled);
   const cards = (data.settings.homeCards || []).filter((card) => card.enabled);
   function openCard(card) {
-    if (card.action === 'referral' || card.action === 'wallet') return go(card.action);
+    if (card.action === 'wallet') return go(card.action);
     setCheckoutMode('purchase');
     setTopUpEsimId(null);
     setCategory(card.action === 'store-regional' ? 'regional' : 'popular');
@@ -696,7 +692,6 @@ function ProfilePage({ data, go, flash, review, onRule }) {
     ['通知偏好设置', 'notifications', Settings2],
     ['受信任的设备', 'trusted-devices', ShieldCheck],
     ['已保存的银行卡', 'saved-cards', CreditCard],
-    ['推荐与奖励', 'referral', UsersRound],
     ['订单', 'orders', ReceiptText],
     ['HelloTalk 对公业务', 'business', Landmark],
   ];
@@ -828,17 +823,7 @@ function WalletPage({ data, updateData, go, back, flash, review, onRule }) {
 }
 
 function ledgerLabel(type) {
-  return ({ referral_reward: '推荐奖励', loyalty_cashback: '订单返现', redeem_code: '兑换码', purchase_spend: 'HelloMoney 抵扣' })[type] || type;
-}
-
-function ReferralPage({ data, go, back, flash, review, onRule }) {
-  return <div className="detail-page referral-page">
-    <PageHeader title="推荐与奖励" back={back} rule="FR-A06" review={review} onRule={onRule} />
-    <section className="referral-hero"><UsersRound /><h2>一起旅行，一起赚取 HelloMoney</h2><p>好友使用你的邀请并完成首单后，你和好友都会获得 {money(data.referral.rewardPerReferral)} HelloMoney。</p></section>
-    <div className="invite-code"><span>你的邀请码</span><strong>{data.referral.code}</strong><button onClick={() => flash('邀请码已复制') }><Copy /></button></div>
-    <button className="primary-action full" onClick={() => flash('已打开系统分享面板（演示）')}>分享邀请</button>
-    <section className="detail-section"><h3>已获得奖励</h3><p>{data.referral.referralCount ? `${data.referral.referralCount} 位好友已完成首单，已获得 ${money(data.referral.rewardedAmount)}。` : '好友完成首单后，奖励才会进入 HelloMoney。'}</p></section>
-  </div>;
+  return ({ loyalty_cashback: '订单返现', redeem_code: '兑换码', purchase_spend: 'HelloMoney 抵扣' })[type] || type;
 }
 
 function NotificationPage({ data, updateData, back, flash, review, onRule }) {
@@ -931,7 +916,7 @@ function AdminConsole({ data, updateData, page, go, flash, review, onRule, setMo
     ['catalog', '目录与 SKU', Package],
     ['orders', '订单测试', ClipboardList],
     ['wallet', 'HelloMoney 与会员', WalletCards],
-    ['growth', '推荐与通知', UsersRound],
+    ['growth', '通知配置', Bell],
     ['review', 'Review', BookOpenCheck],
   ];
   const current = page.replace('admin-', '');
@@ -979,7 +964,7 @@ function AdminDestinations({ data, updateData, flash, review, onRule }) {
       const minPrice = minCatalogPrice(data, item.catalogId);
       return <tr key={item.id}><td><span className="flag-cell">{item.flag}</span><input value={item.name} onChange={(event) => mutateDestination(item.id, 'name', event.target.value)} /></td><td><select value={item.type} onChange={(event) => mutateDestination(item.id, 'type', event.target.value)}><option value="local">本地</option><option value="regional">区域</option><option value="global">全球</option></select></td><td>{catalog.name}</td><td>{minPrice === null ? '无可售 SKU' : money(minPrice)}</td><td><button className={`mini-switch ${item.enabled ? 'on' : ''}`} onClick={() => mutateDestination(item.id, 'enabled', !item.enabled)}><i /></button></td></tr>;
     })}</tbody></table></section>
-    <section className="admin-panel table-panel"><h2>首页教育卡</h2><table><thead><tr><th>卡片主题</th><th>跳转位置</th><th>当前显示</th></tr></thead><tbody>{data.settings.homeCards.map((card) => <tr key={card.id}><td><strong>{card.title}</strong><small>{card.copy}</small></td><td>{card.action === 'store-unlimited' ? '商店 · 热门' : card.action === 'store-regional' ? '商店 · 区域' : card.action === 'wallet' ? 'HelloMoney' : '推荐与奖励'}</td><td><button className={`mini-switch ${card.enabled ? 'on' : ''}`} onClick={() => toggleHomeCard(card.id)}><i /></button></td></tr>)}</tbody></table></section>
+    <section className="admin-panel table-panel"><h2>首页教育卡</h2><table><thead><tr><th>卡片主题</th><th>跳转位置</th><th>当前显示</th></tr></thead><tbody>{data.settings.homeCards.map((card) => <tr key={card.id}><td><strong>{card.title}</strong><small>{card.copy}</small></td><td>{card.action === 'store-unlimited' ? '商店 · 热门' : card.action === 'store-regional' ? '商店 · 区域' : card.action === 'wallet' ? 'HelloMoney' : '—'}</td><td><button className={`mini-switch ${card.enabled ? 'on' : ''}`} onClick={() => toggleHomeCard(card.id)}><i /></button></td></tr>)}</tbody></table></section>
   </>;
 }
 
@@ -1056,10 +1041,9 @@ function AdminWallet({ data, updateData, flash, review, onRule }) {
 
 function AdminGrowth({ data, updateData, flash, review, onRule }) {
   const [marketingCopy, setMarketingCopy] = useState(data.settings.notificationCopy);
-  function save() { updateData((current) => ({ ...current, settings: { ...current.settings, notificationCopy: marketingCopy } })); flash('推荐与通知配置已保存'); }
-  function simulateReferral() { updateData((current) => { const next = structuredClone(current); const reward = next.referral.rewardPerReferral; const now = new Date().toISOString(); next.referral.referralCount += 1; next.referral.rewardedAmount += reward; next.referral.counterpartRewardEvents.unshift({ id: `referee-${Date.now()}`, amount: reward, status: 'issued', createdAt: now }); next.ledger.unshift({ id: `referral-${Date.now()}`, type: 'referral_reward', amount: reward, status: 'available', source: '被推荐用户首单完成 · 推荐人奖励', createdAt: now }); return next; }); flash('已模拟首单完成：推荐人和被推荐人奖励均已生成'); }
-  return <><AdminTitle title="推荐与通知" subtitle="推荐奖励只由被推荐用户的首单成功触发，不能在分享时直接入账。" rule="FR-A11" review={review} onRule={onRule} action={<button className="save-button" onClick={save}>保存</button>} />
-    <div className="admin-two-col"><section className="admin-panel"><h2>推荐奖励</h2><label>每人首单奖励<input type="number" min="0" step="0.5" value={data.referral.rewardPerReferral} onChange={(event) => updateData((current) => ({ ...current, referral: { ...current.referral, rewardPerReferral: Number(event.target.value) } }))} /></label><p className="muted">已成功邀请 {data.referral.referralCount} 人，推荐人累计奖励 {money(data.referral.rewardedAmount)}；被推荐人奖励事件 {data.referral.counterpartRewardEvents.length} 条。</p><button className="primary-admin" onClick={simulateReferral}>模拟被推荐用户首单</button></section><section className="admin-panel"><h2>重要更新订阅</h2><label>订阅文案<textarea value={marketingCopy} onChange={(event) => setMarketingCopy(event.target.value)} /></label><p className="muted">营销与产品更新由订阅控制，eSIM 服务提醒独立存在。</p></section></div></>;
+  function save() { updateData((current) => ({ ...current, settings: { ...current.settings, notificationCopy: marketingCopy } })); flash('通知配置已保存'); }
+  return <><AdminTitle title="通知配置" subtitle="配置重要更新订阅文案；营销与产品更新由用户订阅控制，eSIM 服务提醒独立存在。" rule="FR-A11" review={review} onRule={onRule} action={<button className="save-button" onClick={save}>保存</button>} />
+    <section className="admin-panel"><h2>重要更新订阅</h2><label>订阅文案<textarea value={marketingCopy} onChange={(event) => setMarketingCopy(event.target.value)} /></label><p className="muted">此文案用于首次订阅弹窗；通知偏好页分别控制营销更新、产品更新和 eSIM 服务提醒。</p></section></>;
 }
 
 function AdminReview({ review, onRule }) {

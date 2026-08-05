@@ -77,18 +77,14 @@ export const defaultData = {
     { id: 'seed-reward', type: 'redeem_code', amount: 3, status: 'available', source: '欢迎奖励', createdAt: '2026-08-04T09:00:00.000Z' },
   ],
   loyalty: { tier: '旅行者', totalSpend: 0, cashbackRate: 0.05, nextTierThreshold: 50 },
-  referral: { code: 'YIYI-TRAVEL', rewardPerReferral: 3, referralCount: 0, rewardedAmount: 0, counterpartRewardEvents: [] },
   settings: {
     onboardingEnabled: true,
     subscribeSheetEnabled: true,
-    welcomeCard: 'referral',
-    referralReward: 3,
     cashbackDelay: 'instant',
     notificationCopy: '通过电子邮件接收优惠、eSIM 使用提示和流量提醒。',
     homeCards: [
       { id: 'unlimited', title: '不限流量，轻松出行', copy: '需要持续连接时，优先查看不限流量套餐与适用规则。', action: 'store-unlimited', enabled: true, theme: 'sun' },
       { id: 'regional', title: '一次覆盖多个目的地', copy: '跨国行程可从区域和全球套餐中选择覆盖范围。', action: 'store-regional', enabled: true, theme: 'map' },
-      { id: 'referral', title: '推荐好友，赚取 HelloMoney', copy: '好友首单完成后，双方获得旅行余额。', action: 'referral', enabled: true, theme: 'referral' },
       { id: 'loyalty', title: '旅行越多，回馈越多', copy: '通过订单累计消费，并查看会员返现与余额。', action: 'wallet', enabled: true, theme: 'loyalty' },
     ],
   },
@@ -112,9 +108,11 @@ export function hydrateData(storedData) {
   if (!storedData || typeof storedData !== 'object') return defaults;
   const storedProfile = storedData.profile || {};
   const storedSettings = storedData.settings || {};
+  const { referral: _referral, ...storedWithoutReferral } = storedData;
+  const { welcomeCard: _welcomeCard, referralReward: _referralReward, ...storedSettingsWithoutReferral } = storedSettings;
   return {
     ...defaults,
-    ...storedData,
+    ...storedWithoutReferral,
     profile: {
       ...defaults.profile,
       ...storedProfile,
@@ -130,14 +128,14 @@ export function hydrateData(storedData) {
     skus: mergeRecords(defaults.skus, storedData.skus),
     settings: {
       ...defaults.settings,
-      ...storedSettings,
-      homeCards: mergeRecords(defaults.settings.homeCards, storedSettings.homeCards),
+      ...storedSettingsWithoutReferral,
+      homeCards: mergeRecords(defaults.settings.homeCards, storedSettings.homeCards)
+        .filter((card) => defaults.settings.homeCards.some((defaultCard) => defaultCard.id === card.id)),
     },
     orders: storedData.orders || defaults.orders,
     esims: storedData.esims || defaults.esims,
     ledger: storedData.ledger || defaults.ledger,
     loyalty: { ...defaults.loyalty, ...(storedData.loyalty || {}) },
-    referral: { ...defaults.referral, ...(storedData.referral || {}) },
   };
 }
 
