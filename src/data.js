@@ -1,6 +1,14 @@
 export const STORE_KEY = 'hellotalk-esim-airalo-demo-v2';
 
 export const defaultData = {
+  integration: {
+    provider: 'airalo_partner',
+    providerName: 'Airalo Partner Platform',
+    environment: 'sandbox',
+    packageSource: 'partner_api',
+    orderSource: 'partner_api',
+    paymentProvider: 'stripe',
+  },
   profile: {
     deviceSupport: 'supported',
     onboardingCompleted: false,
@@ -34,27 +42,27 @@ export const defaultData = {
     { id: 'cat-global', name: '全球', coverage: '136 个国家和地区', network: '4G / 5G', operator: '全球合作网络' },
   ],
   skus: [
-    { id: 'jp-1', catalogId: 'cat-japan', data: '1 GB', validityDays: 7, price: 4.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'jp-3', catalogId: 'cat-japan', data: '3 GB', validityDays: 15, price: 8, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'jp-unlimited', catalogId: 'cat-japan', data: '不限流量', validityDays: 10, price: 22, currency: 'USD', unlimited: true, activationPolicy: 'on_install', topUpEnabled: false, enabled: true },
-    { id: 'us-1', catalogId: 'cat-usa', data: '1 GB', validityDays: 7, price: 4.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'us-5', catalogId: 'cat-usa', data: '5 GB', validityDays: 30, price: 16, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'fr-3', catalogId: 'cat-france', data: '3 GB', validityDays: 15, price: 8.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'sg-3', catalogId: 'cat-singapore', data: '3 GB', validityDays: 15, price: 7, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'asia-3', catalogId: 'cat-asia', data: '3 GB', validityDays: 30, price: 12, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'asia-10', catalogId: 'cat-asia', data: '10 GB', validityDays: 30, price: 28, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'eu-5', catalogId: 'cat-europe', data: '5 GB', validityDays: 30, price: 18, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'mena-1', catalogId: 'cat-mena', data: '1 GB', validityDays: 7, price: 5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'mena-3', catalogId: 'cat-mena', data: '3 GB', validityDays: 30, price: 13, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'caribbean-1', catalogId: 'cat-caribbean', data: '1 GB', validityDays: 7, price: 9, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'caribbean-3', catalogId: 'cat-caribbean', data: '3 GB', validityDays: 30, price: 22, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'na-1', catalogId: 'cat-north-america', data: '1 GB', validityDays: 7, price: 7, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'na-5', catalogId: 'cat-north-america', data: '5 GB', validityDays: 30, price: 24, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'oceania-1', catalogId: 'cat-oceania', data: '1 GB', validityDays: 7, price: 6.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'oceania-3', catalogId: 'cat-oceania', data: '3 GB', validityDays: 30, price: 16, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'latam-1', catalogId: 'cat-latin-america', data: '1 GB', validityDays: 7, price: 7.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'latam-3', catalogId: 'cat-latin-america', data: '3 GB', validityDays: 30, price: 19, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
-    { id: 'world-3', catalogId: 'cat-global', data: '3 GB', validityDays: 15, price: 18, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'jp-1', airaloPackageId: 'kallur-digital-7days-1gb', catalogId: 'cat-japan', data: '1 GB', validityDays: 7, price: 4.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'jp-3', airaloPackageId: 'kallur-digital-15days-3gb', catalogId: 'cat-japan', data: '3 GB', validityDays: 15, price: 8, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'jp-unlimited', airaloPackageId: 'kallur-digital-10days-unlimited', catalogId: 'cat-japan', data: '不限流量', validityDays: 10, price: 22, currency: 'USD', unlimited: true, activationPolicy: 'on_install', topUpEnabled: false, enabled: true },
+    { id: 'us-1', airaloPackageId: 'change-7days-1gb', catalogId: 'cat-usa', data: '1 GB', validityDays: 7, price: 4.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'us-5', airaloPackageId: 'change-30days-5gb', catalogId: 'cat-usa', data: '5 GB', validityDays: 30, price: 16, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'fr-3', airaloPackageId: 'change-15days-3gb', catalogId: 'cat-france', data: '3 GB', validityDays: 15, price: 8.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'sg-3', airaloPackageId: 'change-15days-3gb', catalogId: 'cat-singapore', data: '3 GB', validityDays: 15, price: 7, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'asia-3', airaloPackageId: 'change-30days-3gb', catalogId: 'cat-asia', data: '3 GB', validityDays: 30, price: 12, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'asia-10', airaloPackageId: 'change-30days-10gb', catalogId: 'cat-asia', data: '10 GB', validityDays: 30, price: 28, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'eu-5', airaloPackageId: 'change-europe-30days-5gb', catalogId: 'cat-europe', data: '5 GB', validityDays: 30, price: 18, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'mena-1', airaloPackageId: 'change-mena-7days-1gb', catalogId: 'cat-mena', data: '1 GB', validityDays: 7, price: 5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'mena-3', airaloPackageId: 'change-mena-30days-3gb', catalogId: 'cat-mena', data: '3 GB', validityDays: 30, price: 13, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'caribbean-1', airaloPackageId: 'change-caribbean-7days-1gb', catalogId: 'cat-caribbean', data: '1 GB', validityDays: 7, price: 9, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'caribbean-3', airaloPackageId: 'change-caribbean-30days-3gb', catalogId: 'cat-caribbean', data: '3 GB', validityDays: 30, price: 22, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'na-1', airaloPackageId: 'change-north-america-7days-1gb', catalogId: 'cat-north-america', data: '1 GB', validityDays: 7, price: 7, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'na-5', airaloPackageId: 'change-north-america-30days-5gb', catalogId: 'cat-north-america', data: '5 GB', validityDays: 30, price: 24, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'oceania-1', airaloPackageId: 'change-oceania-7days-1gb', catalogId: 'cat-oceania', data: '1 GB', validityDays: 7, price: 6.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'oceania-3', airaloPackageId: 'change-oceania-30days-3gb', catalogId: 'cat-oceania', data: '3 GB', validityDays: 30, price: 16, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'latam-1', airaloPackageId: 'change-latin-america-7days-1gb', catalogId: 'cat-latin-america', data: '1 GB', validityDays: 7, price: 7.5, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'latam-3', airaloPackageId: 'change-latin-america-30days-3gb', catalogId: 'cat-latin-america', data: '3 GB', validityDays: 30, price: 19, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
+    { id: 'world-3', airaloPackageId: 'change-global-15days-3gb', catalogId: 'cat-global', data: '3 GB', validityDays: 15, price: 18, currency: 'USD', unlimited: false, activationPolicy: 'on_network_connect', topUpEnabled: true, enabled: true },
   ],
   orders: [],
   esims: [],
@@ -79,11 +87,21 @@ function mergeRecords(defaultRecords, storedRecords = []) {
   ];
 }
 
+function normalizeSku(sku) {
+  if (!sku?.id) return sku;
+  return {
+    ...sku,
+    airaloPackageId: sku.airaloPackageId || `demo-${sku.catalogId || 'catalog'}-${sku.id}`,
+  };
+}
+
 export function hydrateData(storedData) {
   const defaults = cloneDefaultData();
   if (!storedData || typeof storedData !== 'object') return defaults;
   const storedProfile = storedData.profile || {};
   const storedSettings = storedData.settings || {};
+  const storedOrders = Array.isArray(storedData.orders) ? storedData.orders : [];
+  const storedEsims = Array.isArray(storedData.esims) ? storedData.esims : [];
   const {
     referral: _referral,
     ledger: _ledger,
@@ -102,6 +120,10 @@ export function hydrateData(storedData) {
   return {
     ...defaults,
     ...storedWithoutRemovedFeatures,
+    integration: {
+      ...defaults.integration,
+      ...(storedData.integration || {}),
+    },
     profile: {
       ...defaults.profile,
       deviceSupport: ['unknown', 'supported', 'unsupported'].includes(storedProfile.deviceSupport)
@@ -111,15 +133,32 @@ export function hydrateData(storedData) {
     },
     destinations: mergeRecords(defaults.destinations, storedData.destinations),
     catalogs: mergeRecords(defaults.catalogs, storedData.catalogs),
-    skus: mergeRecords(defaults.skus, storedData.skus),
+    skus: mergeRecords(defaults.skus, storedData.skus).map(normalizeSku),
     settings: {
       ...defaults.settings,
       ...storedSettingsWithoutRemovedFeatures,
       homeCards: mergeRecords(defaults.settings.homeCards, storedSettings.homeCards)
         .filter((card) => defaults.settings.homeCards.some((defaultCard) => defaultCard.id === card.id)),
     },
-    orders: Array.isArray(storedData.orders) ? storedData.orders : defaults.orders,
-    esims: Array.isArray(storedData.esims) ? storedData.esims : defaults.esims,
+    orders: storedOrders.length
+      ? storedOrders.map((order) => ({
+        ...order,
+        provider: order.provider || defaults.integration.provider,
+        paymentProvider: order.paymentProvider || 'stripe_demo',
+        airaloPackageId: order.airaloPackageId || null,
+        providerOrderId: order.providerOrderId || `demo-airalo-order-${order.id}`,
+        fulfillmentStatus: order.fulfillmentStatus || (order.kind === 'topup' ? 'topup_applied' : 'fulfilled'),
+      }))
+      : defaults.orders,
+    esims: storedEsims.length
+      ? storedEsims.map((esim) => ({
+        ...esim,
+        provider: esim.provider || defaults.integration.provider,
+        airaloEsimId: esim.airaloEsimId || `demo-airalo-esim-${esim.id}`,
+        iccid: esim.iccid || `demo-iccid-${esim.id}`,
+        providerOrderId: esim.providerOrderId || storedOrders.find((order) => order.id === esim.orderId)?.providerOrderId || `demo-airalo-order-${esim.orderId || esim.id}`,
+      }))
+      : defaults.esims,
   };
 }
 
@@ -136,7 +175,7 @@ export function getSku(data, id) {
 }
 
 export function money(value) {
-  return `$${Number(value).toFixed(2)}`;
+  return `US$${Number(value).toFixed(2)}`;
 }
 
 export function dateLabel(value) {
