@@ -1,5 +1,121 @@
 export const STORE_KEY = 'hellotalk-esim-airalo-demo-v2';
 
+export const DEVICE_COMPATIBILITY_CATALOG = [
+  {
+    id: 'iphone-mainland-china',
+    status: 'unsupported',
+    platform: 'ios',
+    modelPrefixes: ['iPhone'],
+    allowNumericSuffix: true,
+    regions: ['CN'],
+  },
+  {
+    id: 'iphone-xs-and-later',
+    status: 'supported',
+    platform: 'ios',
+    modelPrefixes: [
+      'iPhone XS',
+      'iPhone XR',
+      'iPhone 11',
+      'iPhone 12',
+      'iPhone 13',
+      'iPhone 14',
+      'iPhone 15',
+      'iPhone 16',
+      'iPhone 17',
+      'iPhone Air',
+      'iPhone SE (2nd generation)',
+      'iPhone SE (3rd generation)',
+      'iPhone SE 2020',
+      'iPhone SE 2022',
+    ],
+  },
+  {
+    id: 'google-pixel',
+    status: 'supported',
+    platform: 'android',
+    modelPrefixes: [
+      'Google Pixel 3',
+      'Google Pixel 4',
+      'Google Pixel 5',
+      'Google Pixel 6',
+      'Google Pixel 7',
+      'Google Pixel 8',
+      'Google Pixel 9',
+    ],
+  },
+  {
+    id: 'samsung-galaxy',
+    status: 'supported',
+    platform: 'android',
+    modelPrefixes: [
+      'Samsung Galaxy S20',
+      'Samsung Galaxy S21',
+      'Samsung Galaxy S22',
+      'Samsung Galaxy S23',
+      'Samsung Galaxy S24',
+      'Samsung Galaxy S25',
+      'Samsung Galaxy Note 20',
+      'Samsung Galaxy Z Fold2',
+      'Samsung Galaxy Z Fold3',
+      'Samsung Galaxy Z Fold4',
+      'Samsung Galaxy Z Fold5',
+      'Samsung Galaxy Z Flip',
+    ],
+  },
+  {
+    id: 'legacy-iphone',
+    status: 'unsupported',
+    platform: 'ios',
+    modelPrefixes: [
+      'iPhone X',
+      'iPhone 8',
+      'iPhone 7',
+      'iPhone 6',
+      'iPhone SE (1st generation)',
+      'iPhone SE 2016',
+    ],
+  },
+  {
+    id: 'legacy-android',
+    status: 'unsupported',
+    platform: 'android',
+    modelPrefixes: [
+      'Google Pixel 2',
+      'Samsung Galaxy S10',
+      'Samsung Galaxy S9',
+      'Samsung Galaxy Note 10',
+      'Samsung Galaxy Note 9',
+    ],
+  },
+];
+
+function normalizeDeviceValue(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function matchesDeviceModel(deviceModel, prefix) {
+  const model = normalizeDeviceValue(deviceModel);
+  const normalizedPrefix = normalizeDeviceValue(prefix);
+  if (!model || !normalizedPrefix || !model.startsWith(normalizedPrefix)) return false;
+  const nextCharacter = model.charAt(normalizedPrefix.length);
+  return !nextCharacter || !/\d/.test(nextCharacter);
+}
+
+export function inferDeviceSupport({ platform, deviceModel, deviceRegion } = {}) {
+  const normalizedPlatform = String(platform || '').toLowerCase();
+  const normalizedRegion = String(deviceRegion || '').trim().toUpperCase();
+  const matchedRule = DEVICE_COMPATIBILITY_CATALOG.find((rule) => (
+    rule.platform === normalizedPlatform
+    && (!rule.regions || rule.regions.includes(normalizedRegion))
+    && rule.modelPrefixes.some((prefix) => (
+      matchesDeviceModel(deviceModel, prefix)
+      || (rule.allowNumericSuffix && normalizeDeviceValue(deviceModel).startsWith(normalizeDeviceValue(prefix)))
+    ))
+  ));
+  return matchedRule?.status || 'unknown';
+}
+
 export const defaultData = {
   integration: {
     provider: 'airalo_partner',
@@ -10,8 +126,14 @@ export const defaultData = {
     paymentProvider: 'stripe',
   },
   profile: {
+    deviceModel: 'iPhone 15',
+    deviceRegion: 'US',
     deviceSupport: 'supported',
+    deviceSupportSource: 'catalog',
+    platform: 'ios',
+    osVersion: '18.5',
     onboardingCompleted: false,
+    searchHistory: [],
   },
   destinations: [
     { id: 'japan', name: '日本', flag: '🇯🇵', type: 'local', catalogId: 'cat-japan', enabled: true },
@@ -68,8 +190,9 @@ export const defaultData = {
   esims: [],
   settings: {
     homeCards: [
-      { id: 'unlimited', title: '不限流量，轻松出行', copy: '需要持续连接时，优先查看不限流量套餐与适用规则。', action: 'store-unlimited', enabled: true, theme: 'sun' },
-      { id: 'regional', title: '一次覆盖多个目的地', copy: '跨国行程可从区域和全球套餐中选择覆盖范围。', action: 'store-regional', enabled: true, theme: 'map' },
+      { id: 'stay-connected', title: '出境也能保持连接', copy: '用目的地流量处理导航、沟通和日常出行需求。', enabled: true, theme: 'sun' },
+      { id: 'keep-your-number', title: '不必更换实体 SIM 卡', copy: '在支持 eSIM 的设备上添加旅行套餐，原有号码可继续保留。', enabled: true, theme: 'map' },
+      { id: 'travel-data', title: '按目的地选择套餐', copy: '出发前比较覆盖范围、流量与有效期，到达后再使用。', enabled: true, theme: 'sun' },
     ],
   },
 };
@@ -102,6 +225,23 @@ export function hydrateData(storedData) {
   const storedSettings = storedData.settings || {};
   const storedOrders = Array.isArray(storedData.orders) ? storedData.orders : [];
   const storedEsims = Array.isArray(storedData.esims) ? storedData.esims : [];
+  const platform = storedProfile.platform || defaults.profile.platform;
+  const deviceModel = typeof storedProfile.deviceModel === 'string' && storedProfile.deviceModel.trim()
+    ? storedProfile.deviceModel.trim()
+    : defaults.profile.deviceModel;
+  const deviceRegion = typeof storedProfile.deviceRegion === 'string' && storedProfile.deviceRegion.trim()
+    ? storedProfile.deviceRegion.trim().toUpperCase()
+    : defaults.profile.deviceRegion;
+  const inferredDeviceSupport = inferDeviceSupport({ platform, deviceModel, deviceRegion });
+  const storedDeviceSupport = ['unknown', 'supported', 'unsupported'].includes(storedProfile.deviceSupport)
+    ? storedProfile.deviceSupport
+    : 'unknown';
+  const storedDeviceSupportSource = storedProfile.deviceSupportSource === 'user' ? 'user' : 'unknown';
+  const deviceSupport = inferredDeviceSupport !== 'unknown'
+    ? inferredDeviceSupport
+    : storedDeviceSupportSource === 'user'
+      ? storedDeviceSupport
+      : 'unknown';
   const {
     referral: _referral,
     ledger: _ledger,
@@ -126,10 +266,22 @@ export function hydrateData(storedData) {
     },
     profile: {
       ...defaults.profile,
-      deviceSupport: ['unknown', 'supported', 'unsupported'].includes(storedProfile.deviceSupport)
-        ? storedProfile.deviceSupport
-        : defaults.profile.deviceSupport,
+      deviceModel,
+      deviceRegion,
+      deviceSupport,
+      deviceSupportSource: inferredDeviceSupport !== 'unknown'
+        ? 'catalog'
+        : storedDeviceSupportSource === 'user'
+          ? 'user'
+          : 'unknown',
+      platform,
+      osVersion: storedProfile.osVersion || defaults.profile.osVersion,
       onboardingCompleted: Boolean(storedProfile.onboardingCompleted),
+      searchHistory: Array.isArray(storedProfile.searchHistory)
+        ? storedProfile.searchHistory
+          .filter((id, index, history) => typeof id === 'string' && history.indexOf(id) === index)
+          .slice(0, 5)
+        : defaults.profile.searchHistory,
     },
     destinations: mergeRecords(defaults.destinations, storedData.destinations),
     catalogs: mergeRecords(defaults.catalogs, storedData.catalogs),
@@ -146,20 +298,44 @@ export function hydrateData(storedData) {
         provider: order.provider || defaults.integration.provider,
         paymentProvider: order.paymentProvider || 'stripe_demo',
         airaloPackageId: order.airaloPackageId || null,
-        providerOrderId: order.providerOrderId || `demo-airalo-order-${order.id}`,
-        fulfillmentStatus: order.fulfillmentStatus || (order.kind === 'topup' ? 'topup_applied' : 'fulfilled'),
+        paymentStatus: order.paymentStatus || (order.status === 'paid' ? 'paid' : order.status || 'pending'),
+        providerOrderId: order.providerOrderId || null,
+        requestId: order.requestId || null,
+        fulfillmentStatus: normalizeFulfillmentStatus(order.fulfillmentStatus, order.kind),
       }))
       : defaults.orders,
     esims: storedEsims.length
       ? storedEsims.map((esim) => ({
         ...esim,
         provider: esim.provider || defaults.integration.provider,
-        airaloEsimId: esim.airaloEsimId || `demo-airalo-esim-${esim.id}`,
-        iccid: esim.iccid || `demo-iccid-${esim.id}`,
-        providerOrderId: esim.providerOrderId || storedOrders.find((order) => order.id === esim.orderId)?.providerOrderId || `demo-airalo-order-${esim.orderId || esim.id}`,
+        airaloEsimId: esim.airaloEsimId || null,
+        iccid: esim.iccid || null,
+        providerOrderId: esim.providerOrderId || storedOrders.find((order) => order.id === esim.orderId)?.providerOrderId || null,
+        fulfillmentStatus: normalizeFulfillmentStatus(esim.fulfillmentStatus, 'purchase'),
+        installGuideStatus: esim.installGuideStatus || (esim.status === 'installed' ? 'completed' : 'not_requested'),
+        connectionGuideStatus: esim.connectionGuideStatus || 'not_started',
+        usageStatus: esim.usageStatus || legacyUsageStatus(esim.status),
+        installationMethods: Array.isArray(esim.installationMethods) ? esim.installationMethods : ['qr', 'manual'],
+        networkSetup: esim.networkSetup || { isRoaming: true, apnType: 'automatic', apnValue: null },
+        topUpHistory: Array.isArray(esim.topUpHistory) ? esim.topUpHistory : [],
       }))
       : defaults.esims,
   };
+}
+
+function legacyUsageStatus(status) {
+  return ({
+    active: 'ACTIVE',
+    low_data: 'FINISHED',
+    expired: 'EXPIRED',
+  })[status] || 'NOT_ACTIVE';
+}
+
+function normalizeFulfillmentStatus(status, kind) {
+  if (kind === 'topup' && ['topup_applied', 'fulfilled'].includes(status)) return 'topup_applied';
+  if (['fulfilled', 'ready_for_install', 'installed', 'active'].includes(status)) return 'delivered';
+  if (['awaiting_airalo', 'delivery_failed', 'topup_pending', 'topup_applied', 'delivered'].includes(status)) return status;
+  return kind === 'topup' ? 'topup_pending' : 'awaiting_airalo';
 }
 
 export function getCatalog(data, catalogId) {
@@ -196,6 +372,17 @@ export function validTransitions(esim) {
     expired: [],
   };
   return transitions[esim.status] || [];
+}
+
+export function usageStatusLabel(status) {
+  return ({
+    NOT_ACTIVE: '未激活',
+    ACTIVE: '使用中',
+    FINISHED: '流量已用尽',
+    EXPIRED: '已过期',
+    RECYCLED: '已回收',
+    UNKNOWN: '状态待确认',
+  })[status] || '状态待确认';
 }
 
 export function minCatalogPrice(data, catalogId) {

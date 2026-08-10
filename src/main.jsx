@@ -2,11 +2,11 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
-  BookOpenCheck,
   Check,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  Clock3,
   Download,
   Globe2,
   Info,
@@ -18,10 +18,9 @@ import {
   Settings2,
   ShieldCheck,
   ShoppingBag,
+  SlidersHorizontal,
   Signal,
   Smartphone,
-  ToggleLeft,
-  ToggleRight,
   Wifi,
   X,
 } from 'lucide-react';
@@ -33,21 +32,323 @@ import {
   getDestination,
   getSku,
   hydrateData,
+  inferDeviceSupport,
   minCatalogPrice,
   money,
   planStartCopy,
   skuLabel,
-  validTransitions,
+  usageStatusLabel,
 } from './data';
 import './styles.css';
 
 const RULES = {
-  'FR-A01': { title: '商店与目录', pages: ['store', 'search'], surface: 'app' },
-  'FR-A02': { title: '新手引导与设备兼容', pages: ['onboarding', 'compatibility-checkout'], surface: 'app' },
-  'FR-A03': { title: '目的地与套餐', pages: ['destination', 'plan'], surface: 'app' },
-  'FR-A04': { title: 'Stripe 结算与支付', pages: ['checkout', 'stripe-checkout', 'success'], surface: 'app' },
-  'FR-A05': { title: '我的 eSIM', pages: ['my-esims', 'esim-detail', 'install', 'connect'], surface: 'app' },
+  'FR-002': { title: '目的地发现与搜索', pages: ['store', 'search'], surface: 'app' },
+  'FR-003': { title: '套餐详情与价格', pages: ['plan', 'destination'], surface: 'app' },
+  'FR-004': { title: '设备兼容性提示', pages: ['onboarding', 'compatibility-checkout'], surface: 'app' },
+  'FR-005': { title: '确认订单与 Stripe Checkout', pages: ['checkout', 'stripe-checkout'], surface: 'app' },
+  'FR-006': { title: '支付确认与 Airalo 履约', pages: ['success', 'my-esims'], surface: 'app' },
+  'FR-007': { title: '我的 eSIM 列表与详情', pages: ['my-esims', 'esim-detail'], surface: 'app' },
+  'FR-008': { title: 'eSIM 安装', pages: ['install'], surface: 'app' },
+  'FR-009': { title: '抵达后连接与故障引导', pages: ['connect', 'support'], surface: 'app' },
+  'FR-010': { title: '有效期、用量与状态刷新', pages: ['esim-detail', 'my-esims'], surface: 'app' },
+  'FR-011': { title: 'Top up 加购', pages: ['plan', 'destination', 'checkout'], surface: 'app' },
+  'FR-012': { title: '帮助、退款与异常告知', pages: ['support', 'support-topic', 'support-article', 'support-request'], surface: 'app' },
 };
+
+const PAGE_IDS = new Set([
+  'store',
+  'search',
+  'destination',
+  'plan',
+  'device-check',
+  'compatibility-checkout',
+  'checkout',
+  'stripe-checkout',
+  'success',
+  'my-esims',
+  'esim-detail',
+  'install',
+  'connect',
+  'onboarding',
+  'support',
+  'support-topic',
+  'support-article',
+  'support-request',
+]);
+
+const PAGE_BACK_FALLBACKS = {
+  search: 'store',
+  destination: 'store',
+  plan: 'destination',
+  'device-check': 'plan',
+  'compatibility-checkout': 'plan',
+  checkout: 'plan',
+  'stripe-checkout': 'checkout',
+  success: 'my-esims',
+  'esim-detail': 'my-esims',
+  install: 'esim-detail',
+  connect: 'esim-detail',
+  onboarding: 'store',
+  support: 'store',
+  'support-topic': 'support',
+  'support-article': 'support-topic',
+  'support-request': 'support',
+};
+
+const DEMO_DEVICE_PROFILES = [
+  { id: 'iphone-15', label: 'iPhone 15 · 支持', platform: 'ios', deviceModel: 'iPhone 15', deviceRegion: 'US', osVersion: '18.5' },
+  { id: 'iphone-8', label: 'iPhone 8 · 不支持', platform: 'ios', deviceModel: 'iPhone 8', deviceRegion: 'US', osVersion: '16.7' },
+  { id: 'fairphone-5', label: 'Fairphone 5 · 待确认', platform: 'android', deviceModel: 'Fairphone 5', deviceRegion: 'DE', osVersion: '14' },
+];
+
+const DEMO_SCENARIOS = [
+  { id: 'store', label: '初始商店', detail: '没有 eSIM，回到购买入口。' },
+  { id: 'awaiting-airalo', label: '已支付，交付中', detail: 'Stripe 已确认，等待 Airalo 异步交付。' },
+  { id: 'pending-install', label: '已交付，待安装', detail: '已获得 eSIM，但尚未打开安装指引。' },
+  { id: 'installed', label: '已安装，待连接', detail: '系统已添加 eSIM，尚未完成网络设置。' },
+  { id: 'ready-to-connect', label: '已设置，待验证', detail: '已完成连接引导，等待供应商确认可用。' },
+  { id: 'active', label: '正常可用', detail: '供应商已确认套餐处于可使用状态。' },
+  { id: 'finished', label: '流量已用尽', detail: '可进入加购链路。' },
+  { id: 'expired', label: '套餐已过期', detail: '可进入加购链路，具体资格以供应商为准。' },
+  { id: 'topup-pending', label: '加购同步中', detail: 'Stripe 已确认加购，等待按 ICCID 同步。' },
+  { id: 'delivery-failed', label: '交付异常', detail: '支付已确认，但供应履约未成功。' },
+];
+
+function demoNow() {
+  return new Date().toISOString();
+}
+
+function ensureDemoIdentifiers(esim) {
+  return {
+    ...esim,
+    airaloEsimId: esim.airaloEsimId || `demo-simulated-airalo-esim-${esim.id}`,
+    iccid: esim.iccid || `demo-simulated-iccid-${esim.id}`,
+    providerOrderId: esim.providerOrderId || `demo-simulated-airalo-order-${esim.orderId}`,
+    simulated: true,
+  };
+}
+
+function createDemoPurchase(data) {
+  const sku = data.skus.find((item) => item.id === 'jp-3' && item.enabled)
+    || data.skus.find((item) => item.enabled);
+  const now = demoNow();
+  const orderId = `demo-order-${Date.now()}`;
+  const esimId = `demo-esim-${Date.now()}`;
+  const requestId = `demo-request-${orderId}`;
+  return {
+    order: {
+      id: orderId,
+      skuId: sku.id,
+      airaloPackageId: sku.airaloPackageId,
+      kind: 'purchase',
+      parentEsimId: null,
+      esimId,
+      airaloEsimId: null,
+      iccid: null,
+      status: 'paid',
+      paymentStatus: 'paid',
+      amount: sku.price,
+      paymentProvider: 'stripe_demo',
+      provider: 'airalo_partner',
+      providerOrderId: null,
+      requestId,
+      fulfillmentStatus: 'awaiting_airalo',
+      createdAt: now,
+    },
+    esim: {
+      id: esimId,
+      orderId,
+      currentSkuId: sku.id,
+      airaloEsimId: null,
+      iccid: null,
+      provider: 'airalo_partner',
+      providerOrderId: null,
+      requestId,
+      status: 'pending_install',
+      fulfillmentStatus: 'awaiting_airalo',
+      installGuideStatus: 'not_requested',
+      connectionGuideStatus: 'not_started',
+      usageStatus: 'NOT_ACTIVE',
+      installMethod: null,
+      installationMethods: ['direct', 'qr', 'manual'],
+      networkSetup: { isRoaming: true, apnType: 'automatic', apnValue: null },
+      remainingData: sku.unlimited ? null : sku.data,
+      startedAt: null,
+      expiresAt: null,
+      topUpHistory: [],
+      topUpEligible: true,
+      simulated: true,
+    },
+  };
+}
+
+function ensureScenarioEsim(next) {
+  if (next.esims.length) return next.esims[0];
+  const created = createDemoPurchase(next);
+  next.orders.unshift(created.order);
+  next.esims.unshift(created.esim);
+  return created.esim;
+}
+
+function setDemoUsage(target, sku, usageStatus) {
+  const now = new Date();
+  target.usageStatus = usageStatus;
+  if (usageStatus === 'ACTIVE') {
+    target.status = 'active';
+    target.remainingData = sku.unlimited ? null : target.remainingData === '0 MB' ? sku.data : (target.remainingData || sku.data);
+    if (!target.startedAt) {
+      target.startedAt = now.toISOString();
+      target.expiresAt = new Date(now.getTime() + sku.validityDays * 86400000).toISOString();
+    }
+  }
+  if (usageStatus === 'FINISHED') {
+    target.status = 'low_data';
+    target.remainingData = '0 MB';
+  }
+  if (usageStatus === 'EXPIRED') target.status = 'expired';
+  if (usageStatus === 'RECYCLED') target.status = 'expired';
+  target.lastSyncedAt = now.toISOString();
+}
+
+function topUpSyncState(data, esim) {
+  if (!esim) return '';
+  if (esim.fulfillmentStatus === 'topup_pending') return 'topup_pending';
+  const topUpOrder = data.orders.find((order) => (
+    order.kind === 'topup'
+      && (order.parentEsimId === esim.id || order.esimId === esim.id)
+      && order.fulfillmentStatus === 'topup_applied'
+  ));
+  return topUpOrder || (esim.topUpHistory || []).length ? 'topup_applied' : '';
+}
+
+function applyDemoScenario(current, scenarioId) {
+  if (scenarioId === 'store') {
+    return { data: cloneDefaultData(), page: 'store', esimId: null, destinationId: 'japan', skuId: null, checkoutMode: 'purchase' };
+  }
+  const next = structuredClone(current);
+  const target = ensureScenarioEsim(next);
+  const sku = currentEsimSku(next, target);
+  const destination = next.destinations.find((item) => item.catalogId === sku.catalogId && item.enabled);
+  const now = new Date();
+  const clearTopUpState = () => {
+    next.orders = next.orders.filter((order) => !(
+      order.kind === 'topup'
+      && (order.parentEsimId === target.id || order.esimId === target.id)
+    ));
+    target.pendingTopUpOrderId = null;
+    target.topUpHistory = [];
+  };
+  const delivered = () => {
+    clearTopUpState();
+    Object.assign(target, ensureDemoIdentifiers(target), {
+      fulfillmentStatus: 'delivered',
+      status: 'pending_install',
+      installGuideStatus: 'not_requested',
+      connectionGuideStatus: 'not_started',
+      usageStatus: 'NOT_ACTIVE',
+      remainingData: sku.unlimited ? null : sku.data,
+      startedAt: null,
+      expiresAt: null,
+    });
+  };
+
+  if (scenarioId === 'awaiting-airalo') {
+    clearTopUpState();
+    Object.assign(target, {
+      airaloEsimId: null,
+      iccid: null,
+      providerOrderId: null,
+      fulfillmentStatus: 'awaiting_airalo',
+      status: 'pending_install',
+      installGuideStatus: 'not_requested',
+      connectionGuideStatus: 'not_started',
+      usageStatus: 'NOT_ACTIVE',
+      startedAt: null,
+      expiresAt: null,
+    });
+  }
+  if (scenarioId === 'pending-install') delivered();
+  if (scenarioId === 'installed') {
+    delivered();
+    target.status = 'installed';
+    target.installGuideStatus = 'completed';
+  }
+  if (scenarioId === 'ready-to-connect') {
+    delivered();
+    target.status = 'ready_to_connect';
+    target.installGuideStatus = 'completed';
+    target.connectionGuideStatus = 'completed';
+  }
+  if (scenarioId === 'active') {
+    delivered();
+    target.installGuideStatus = 'completed';
+    target.connectionGuideStatus = 'completed';
+    setDemoUsage(target, sku, 'ACTIVE');
+  }
+  if (scenarioId === 'finished' || scenarioId === 'expired') {
+    delivered();
+    target.installGuideStatus = 'completed';
+    target.connectionGuideStatus = 'completed';
+    setDemoUsage(target, sku, scenarioId === 'finished' ? 'FINISHED' : 'EXPIRED');
+  }
+  if (scenarioId === 'delivery-failed') {
+    clearTopUpState();
+    Object.assign(target, {
+      airaloEsimId: null,
+      iccid: null,
+      providerOrderId: null,
+      fulfillmentStatus: 'delivery_failed',
+      status: 'pending_install',
+      installGuideStatus: 'not_requested',
+      connectionGuideStatus: 'not_started',
+      usageStatus: 'NOT_ACTIVE',
+      startedAt: null,
+      expiresAt: null,
+    });
+  }
+  if (scenarioId === 'topup-pending') {
+    delivered();
+    target.installGuideStatus = 'completed';
+    target.connectionGuideStatus = 'completed';
+    setDemoUsage(target, sku, 'FINISHED');
+    const existing = next.orders.find((order) => order.id === target.pendingTopUpOrderId);
+    if (!existing) {
+      const topUpOrderId = `demo-topup-${Date.now()}`;
+      next.orders.unshift({
+        id: topUpOrderId,
+        skuId: sku.id,
+        airaloPackageId: sku.airaloPackageId,
+        kind: 'topup',
+        parentEsimId: target.id,
+        esimId: target.id,
+        airaloEsimId: target.airaloEsimId,
+        iccid: target.iccid,
+        status: 'paid',
+        paymentStatus: 'paid',
+        amount: sku.price,
+        paymentProvider: 'stripe_demo',
+        provider: 'airalo_partner',
+        providerOrderId: null,
+        requestId: `demo-request-${topUpOrderId}`,
+        fulfillmentStatus: 'topup_pending',
+        createdAt: now.toISOString(),
+      });
+      target.pendingTopUpOrderId = topUpOrderId;
+    } else {
+      existing.fulfillmentStatus = 'topup_pending';
+    }
+    target.fulfillmentStatus = 'topup_pending';
+  }
+
+  return {
+    data: next,
+    page: 'esim-detail',
+    esimId: target.id,
+    destinationId: destination?.id || 'japan',
+    skuId: sku.id,
+    checkoutMode: scenarioId === 'topup-pending' ? 'topup' : 'purchase',
+  };
+}
 
 function usePersistedData() {
   const [data, setData] = useState(() => {
@@ -66,12 +367,13 @@ function IconButton({ label, children, onClick, className = '', disabled = false
   return <button className={`icon-button ${className}`} aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-function PageHeader({ title, back, right, rule, review, onRule }) {
+function PageHeader({ title, back, right, rule, secondaryRule, review, onRule }) {
   return <header className="page-header">
-    <div className="header-side">{back && <IconButton label="返回" onClick={back}><ChevronLeft /></IconButton>}</div>
+    <div className="header-side">{back && <IconButton label="返回" onClick={() => back()}><ChevronLeft /></IconButton>}</div>
     <h1>{title}</h1>
     <div className="header-side">{right}</div>
     <RuleMarker id={rule} review={review} onClick={onRule} />
+    <RuleMarker id={secondaryRule} review={review} onClick={onRule} className="secondary-rule-marker" />
   </header>;
 }
 
@@ -82,9 +384,9 @@ function TabHeader({ title, rule, review, onRule }) {
   </header>;
 }
 
-function RuleMarker({ id, review, onClick }) {
+function RuleMarker({ id, review, onClick, className = '' }) {
   if (!review || !id) return null;
-  return <button className="rule-marker" data-review-marker={id} onClick={onClick} title={`定位 ${id}`}>{id.replace('FR-A', '')}</button>;
+  return <button className={`rule-marker ${className}`} data-review-marker={id} onClick={() => onClick?.(id)} title={`定位 ${id}`}>{id.replace('FR-', '')}</button>;
 }
 
 function Toast({ toast }) {
@@ -100,8 +402,10 @@ function lowDataAmount(sku) {
 }
 
 function remainingDataLabel(esim, sku) {
-  if (esim.status === 'expired') return '不可用';
+  if (['EXPIRED', 'RECYCLED'].includes(esim.usageStatus)) return '不可用';
+  if (esim.usageStatus === 'FINISHED') return '0 MB';
   if (sku.unlimited) return '不限流量';
+  if (esim.usageStatus === 'UNKNOWN') return '暂不可查';
   return esim.remainingData || sku.data;
 }
 
@@ -112,6 +416,119 @@ function currentEsimSku(data, esim) {
 
 function linkedEsimForOrder(data, order) {
   return data.esims.find((item) => item.id === order.parentEsimId || item.orderId === order.id);
+}
+
+function isDelivered(esim) {
+  return ['delivered', 'topup_pending', 'topup_applied'].includes(esim?.fulfillmentStatus);
+}
+
+function deliveryLabel(status) {
+  return ({
+    awaiting_airalo: '交付中',
+    delivered: '待安装',
+    delivery_failed: '交付异常',
+    topup_pending: '加购同步中',
+    topup_applied: '已同步',
+  })[status] || '待确认';
+}
+
+function directInstallEligible(profile) {
+  if (profile?.platform !== 'ios') return false;
+  const version = Number.parseFloat(profile.osVersion);
+  return Number.isFinite(version) && version >= 17.4;
+}
+
+function devicePlatformLabel(profile) {
+  return profile?.platform === 'android' ? 'Android' : 'iPhone';
+}
+
+function deviceSupportCopy(status, source) {
+  return ({
+    supported: {
+      tone: 'supported',
+      label: '此设备支持 eSIM',
+      detail: source === 'catalog'
+        ? '已根据设备型号完成判断。请同时确认设备已解锁，并有可用的 eSIM 容量。'
+        : '设备支持 eSIM。请同时确认设备已解锁，并有可用的 eSIM 容量。',
+    },
+    unsupported: {
+      tone: 'unsupported',
+      label: '此设备不支持 eSIM',
+      detail: source === 'catalog'
+        ? '已根据设备型号完成判断。本设备无法完成安装，你仍可为其他兼容设备购买。'
+        : '本设备无法完成安装，你仍可为其他兼容设备购买。',
+    },
+    unknown: {
+      tone: 'unknown',
+      label: '尚未确认此设备兼容性',
+      detail: '先确认设备是否支持 eSIM，再继续购买。',
+    },
+  })[status] || deviceSupportCopy('unknown');
+}
+
+function DeviceCompatibilitySummary({ data, onAction, actionLabel = '确认设备' }) {
+  const status = data.profile?.deviceSupport || 'unknown';
+  const copy = deviceSupportCopy(status, data.profile?.deviceSupportSource);
+  const deviceModel = data.profile?.deviceModel || devicePlatformLabel(data.profile);
+  return <section className={`compatibility-summary ${copy.tone}`} aria-label="设备兼容性">
+    <div className="compatibility-summary-icon">
+      {copy.tone === 'supported' ? <ShieldCheck /> : copy.tone === 'unsupported' ? <AlertTriangle /> : <CircleHelp />}
+    </div>
+    <div className="compatibility-summary-copy">
+      <strong>{copy.label}</strong>
+      <small>{deviceModel} · {data.profile?.osVersion || '系统版本未知'}</small>
+      <p>{copy.detail}</p>
+    </div>
+    {onAction && <button onClick={onAction}>{actionLabel}</button>}
+  </section>;
+}
+
+function recordDestinationSearch(updateData, destinationId) {
+  updateData((current) => {
+    const history = Array.isArray(current.profile?.searchHistory) ? current.profile.searchHistory : [];
+    return {
+      ...current,
+      profile: {
+        ...current.profile,
+        searchHistory: [destinationId, ...history.filter((id) => id !== destinationId)].slice(0, 5),
+      },
+    };
+  });
+}
+
+function DestinationHistory({ data, onSelect, compact = false }) {
+  const history = (data.profile.searchHistory || [])
+    .map((id) => getDestination(data, id))
+    .filter((destination) => destination?.enabled);
+  if (!history.length) return null;
+  return <section className={`destination-history${compact ? ' compact' : ''}`} aria-label="最近搜索">
+    <div className="destination-history-heading"><Clock3 /><h2>最近搜索</h2></div>
+    <div className="destination-history-list">
+      {history.map((destination) => <button key={destination.id} onClick={() => onSelect(destination)}>
+        <span>{destination.flag}</span><strong>{destination.name}</strong>
+      </button>)}
+    </div>
+  </section>;
+}
+
+function DestinationRecommendations({ data, destinations, onSelect, selectedId, heading = '推荐目的地' }) {
+  return <section className="destination-recommendations" aria-label={heading}>
+    <h2>{heading}</h2>
+    <div className="result-list">
+      {destinations.map((destination) => {
+        const catalog = getCatalog(data, destination.catalogId);
+        return <button
+          key={destination.id}
+          className={`search-result${selectedId === destination.id ? ' selected' : ''}`}
+          onClick={() => onSelect(destination)}
+        >
+          <span>{destination.flag}</span>
+          <div><strong>{destination.name}</strong><small>{catalog.coverage}</small></div>
+          {selectedId === destination.id ? <Check /> : <ChevronRight />}
+        </button>;
+      })}
+    </div>
+  </section>;
 }
 
 function BottomTabs({ active, onChange }) {
@@ -138,15 +555,16 @@ function AppShell() {
   const [category, setCategory] = useState('popular');
   const [checkoutMode, setCheckoutMode] = useState('purchase');
   const [topUpEsimId, setTopUpEsimId] = useState(null);
-  const [review, setReview] = useState(initial.get('review') === '1');
+  const [purchaseOnOtherDevice, setPurchaseOnOtherDevice] = useState(false);
+  const [compatibilityReturnPage, setCompatibilityReturnPage] = useState('plan');
+  const [supportTopic, setSupportTopic] = useState('install');
+  const [supportArticleId, setSupportArticleId] = useState('install-start');
+  const [supportContextEsimId, setSupportContextEsimId] = useState(null);
+  const [supportRequestIssue, setSupportRequestIssue] = useState('installation');
+  const [supportRequestSubmitted, setSupportRequestSubmitted] = useState(false);
+  const review = initial.get('review') === '1';
   const [toast, setToast] = useState('');
-  const [activeRule, setActiveRule] = useState(null);
-
-  useEffect(() => {
-    const query = new URLSearchParams();
-    if (review) query.set('review', '1');
-    history.replaceState(null, '', `${location.pathname}${query.toString() ? `?${query}` : ''}`);
-  }, [review]);
+  const [activeRule, setActiveRule] = useState(initial.get('review') === '1' ? 'FR-002' : null);
 
   function updateData(updater) {
     setData((current) => typeof updater === 'function' ? updater(current) : updater);
@@ -159,30 +577,131 @@ function AppShell() {
   }
 
   function go(next, options = {}) {
-    if (!options.replace) setNavHistory((stack) => [...stack, page]);
-    setPage(next);
+    const target = PAGE_IDS.has(next) ? next : 'store';
+    if (target === page) return;
+    if (!options.replace) {
+      setNavHistory((stack) => [...stack, page].filter((item) => PAGE_IDS.has(item)).slice(-20));
+    }
+    setPage(target);
   }
-  function back(fallback = 'store') {
+  function back(fallback) {
     setNavHistory((stack) => {
       const next = [...stack];
-      setPage(next.pop() || fallback);
+      let previous = null;
+      while (next.length && !previous) {
+        const candidate = next.pop();
+        if (PAGE_IDS.has(candidate) && candidate !== page) previous = candidate;
+      }
+      const requestedFallback = typeof fallback === 'string' && PAGE_IDS.has(fallback) ? fallback : null;
+      setPage(previous || requestedFallback || PAGE_BACK_FALLBACKS[page] || 'store');
       return next;
     });
   }
   function goRule(ruleId) {
+    if (!RULES[ruleId]) return;
     setActiveRule(ruleId);
-    if (ruleId === 'FR-A04') {
+    const selectPurchaseContext = () => {
       const sku = data.skus.find((item) => item.enabled && item.catalogId === selectedDestination?.catalogId)
         || data.skus.find((item) => item.enabled);
       const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId && item.enabled);
-      if (sku && destination) {
-        setSelectedDestinationId(destination.id);
-        setSelectedSkuId(sku.id);
-        setCheckoutMode('purchase');
-        setTopUpEsimId(null);
-      }
+      if (!sku || !destination) return null;
+      setSelectedDestinationId(destination.id);
+      setSelectedSkuId(sku.id);
+      setCheckoutMode('purchase');
+      setTopUpEsimId(null);
+      setPurchaseOnOtherDevice(false);
+      return { sku, destination };
+    };
+    const applyRuleScenario = (scenarioId) => {
+      const result = applyDemoScenario(data, scenarioId);
+      updateData(result.data);
+      setSelectedEsimId(result.esimId);
+      setSelectedDestinationId(result.destinationId);
+      setSelectedSkuId(result.skuId);
+      setCheckoutMode(result.checkoutMode);
+      setTopUpEsimId(result.checkoutMode === 'topup' ? result.esimId : null);
+      setPurchaseOnOtherDevice(false);
+      return result;
+    };
+    let targetPage = RULES[ruleId].pages[0];
+
+    if (ruleId === 'FR-003' || ruleId === 'FR-005') {
+      selectPurchaseContext();
     }
-    setPage(RULES[ruleId]?.pages?.[0] || 'store');
+    if (ruleId === 'FR-004') {
+      const profile = DEMO_DEVICE_PROFILES.find((item) => item.id === 'fairphone-5');
+      const next = structuredClone(data);
+      Object.assign(next.profile, {
+        platform: profile.platform,
+        deviceModel: profile.deviceModel,
+        deviceRegion: profile.deviceRegion,
+        osVersion: profile.osVersion,
+        deviceSupport: 'unknown',
+        deviceSupportSource: 'unknown',
+      });
+      updateData(next);
+      setCheckoutMode('purchase');
+      setPurchaseOnOtherDevice(false);
+    }
+    if (ruleId === 'FR-006') {
+      applyRuleScenario('awaiting-airalo');
+    }
+    if (ruleId === 'FR-007' || ruleId === 'FR-008') {
+      applyRuleScenario('pending-install');
+    }
+    if (ruleId === 'FR-009') {
+      applyRuleScenario('installed');
+    }
+    if (ruleId === 'FR-010') {
+      applyRuleScenario('active');
+    }
+    if (ruleId === 'FR-011') {
+      const result = applyRuleScenario('finished');
+      setSelectedEsimId(result.esimId);
+      setTopUpEsimId(result.esimId);
+      setCheckoutMode('topup');
+      setPurchaseOnOtherDevice(false);
+    }
+    if (ruleId === 'FR-012') {
+      setSupportContextEsimId(null);
+      setSupportRequestSubmitted(false);
+    }
+    setNavHistory([]);
+    setPage(targetPage);
+  }
+
+  function applyScenario(scenarioId) {
+    const result = applyDemoScenario(data, scenarioId);
+    updateData(result.data);
+    setNavHistory([]);
+    setPage(result.page);
+    setSelectedEsimId(result.esimId);
+    setSelectedDestinationId(result.destinationId);
+    setSelectedSkuId(result.skuId);
+    setCheckoutMode(result.checkoutMode);
+    setTopUpEsimId(result.checkoutMode === 'topup' ? result.esimId : null);
+    setPurchaseOnOtherDevice(false);
+    flash(`已切换到「${DEMO_SCENARIOS.find((item) => item.id === scenarioId)?.label || '演示状态'}」`);
+  }
+
+  function applyDeviceProfile(profileId) {
+    const profile = DEMO_DEVICE_PROFILES.find((item) => item.id === profileId);
+    if (!profile) return;
+    const { platform, deviceModel, deviceRegion, osVersion } = profile;
+    const deviceSupport = inferDeviceSupport({ platform, deviceModel, deviceRegion, osVersion });
+    updateData((current) => ({
+      ...current,
+      profile: {
+        ...current.profile,
+        platform,
+        deviceModel,
+        deviceRegion,
+        osVersion,
+        deviceSupport,
+        deviceSupportSource: deviceSupport === 'unknown' ? 'unknown' : 'catalog',
+      },
+    }));
+    flash(`当前设备已切换为 ${profile.label}`);
   }
 
   const selectedDestination = getDestination(data, selectedDestinationId);
@@ -196,45 +715,406 @@ function AppShell() {
     selectedEsim, setSelectedEsimId, searchTerm, setSearchTerm,
     category, setCategory,
     checkoutMode, setCheckoutMode, topUpEsim, setTopUpEsimId,
+    purchaseOnOtherDevice, setPurchaseOnOtherDevice,
+    compatibilityReturnPage, setCompatibilityReturnPage,
+    supportTopic, setSupportTopic, supportArticleId, setSupportArticleId,
+    supportContextEsimId, setSupportContextEsimId,
+    supportRequestIssue, setSupportRequestIssue, supportRequestSubmitted, setSupportRequestSubmitted,
   };
 
   return (
-    <main className="workbench">
-      <aside className="workbench-panel no-print">
-        <div className="brand-lockup"><span className="brand-dot">H</span><div><strong>HelloTalk</strong><small>eSIM Demo</small></div></div>
-        <div className="control-label">产品预览</div>
-        <div className="preview-scope"><Smartphone /><span>用户端 · Airalo Partner Platform 供应</span></div>
-        <button className={`review-switch ${review ? 'on' : ''}`} onClick={() => setReview((enabled) => !enabled)}>
-          {review ? <ToggleRight /> : <ToggleLeft />} Linfan Review
-        </button>
-        <div className="scenario-card">
-          <strong>演示状态</strong>
-          <span>{data.esims.length ? `${data.esims.length} 张 eSIM` : '未购买 eSIM'}</span>
-          <span>支付方式：Stripe Hosted Checkout 演示</span>
-          <button onClick={() => { updateData(cloneDefaultData()); flash('已恢复初始演示数据'); }}>重置演示数据</button>
-        </div>
-        {review && <ReviewPanel activeRule={activeRule} onRule={goRule} />}
-      </aside>
+    <main className={`workbench ${review ? 'review-workbench' : ''}`} data-review-mode={review ? 'on' : 'off'}>
+      {review && <aside className="workbench-panel no-print">
+        <DemoConsole
+          data={data}
+          updateData={updateData}
+          selectedEsimId={selectedEsimId}
+          setSelectedEsimId={setSelectedEsimId}
+          setSelectedDestinationId={setSelectedDestinationId}
+          setSelectedSkuId={setSelectedSkuId}
+          setCheckoutMode={setCheckoutMode}
+          setTopUpEsimId={setTopUpEsimId}
+          go={go}
+          applyScenario={applyScenario}
+          applyDeviceProfile={applyDeviceProfile}
+          onReset={() => {
+            updateData(cloneDefaultData());
+            setNavHistory([]);
+            setPage('store');
+            setSelectedEsimId(null);
+            setSelectedDestinationId('japan');
+            setSelectedSkuId(null);
+            setCheckoutMode('purchase');
+            setTopUpEsimId(null);
+            flash('已恢复初始演示数据');
+          }}
+          flash={flash}
+        />
+      </aside>}
       <section className="device-stage"><PhoneCanvas {...shared} /></section>
+      {review && <ReviewPanel activeRule={activeRule} onRule={goRule} />}
       {review && <ReviewConnector activeRule={activeRule} />}
       <Toast toast={toast} />
     </main>
   );
 }
 
+function DemoConsole({
+  data,
+  updateData,
+  selectedEsimId,
+  setSelectedEsimId,
+  setSelectedDestinationId,
+  setSelectedSkuId,
+  setCheckoutMode,
+  setTopUpEsimId,
+  go,
+  applyScenario,
+  applyDeviceProfile,
+  onReset,
+  flash,
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const controlledEsim = data.esims.find((item) => item.id === selectedEsimId) || data.esims[0] || null;
+  const controlledSku = controlledEsim ? currentEsimSku(data, controlledEsim) : null;
+  const currentDeviceProfile = DEMO_DEVICE_PROFILES.find((item) => (
+    item.platform === data.profile.platform
+      && item.deviceModel === data.profile.deviceModel
+      && item.deviceRegion === data.profile.deviceRegion
+  ))?.id || 'custom';
+  const hasDeliveredEsim = Boolean(controlledEsim && isDelivered(controlledEsim));
+  const canUpdateFulfillment = Boolean(controlledEsim && ['awaiting_airalo', 'delivered', 'delivery_failed'].includes(controlledEsim.fulfillmentStatus));
+  const canUpdateInstallGuide = Boolean(hasDeliveredEsim && ['pending_install', 'installed'].includes(controlledEsim.status));
+  const canUpdateInstallStatus = Boolean(hasDeliveredEsim && ['pending_install', 'installed'].includes(controlledEsim.status));
+  const canUpdateConnection = Boolean(hasDeliveredEsim && ['installed', 'ready_to_connect'].includes(controlledEsim.status));
+  const currentTopUpState = topUpSyncState(data, controlledEsim);
+  const canUpdateTopUp = Boolean(
+    hasDeliveredEsim
+      && controlledSku?.topUpEnabled
+      && controlledEsim?.topUpEligible !== false
+      && (
+        currentTopUpState === 'topup_pending'
+        || (!currentTopUpState && ['FINISHED', 'EXPIRED'].includes(controlledEsim?.usageStatus))
+      )
+  );
+  const fulfillmentSelectValue = controlledEsim?.fulfillmentStatus === 'topup_pending'
+    ? 'delivered'
+    : controlledEsim?.fulfillmentStatus || '';
+
+  function updateEsim(mutator, message) {
+    if (!controlledEsim) return;
+    updateData((current) => {
+      const next = structuredClone(current);
+      const target = next.esims.find((item) => item.id === controlledEsim.id);
+      if (!target) return current;
+      mutator(next, target, currentEsimSku(next, target));
+      return next;
+    });
+    if (message) flash(message);
+  }
+
+  function updateFulfillment(status) {
+    updateEsim((next, target, sku) => {
+      if (status === 'delivered') {
+        Object.assign(target, ensureDemoIdentifiers(target), {
+          fulfillmentStatus: 'delivered',
+          status: ['active', 'low_data', 'expired'].includes(target.status) ? target.status : 'pending_install',
+          usageStatus: target.usageStatus || 'NOT_ACTIVE',
+          remainingData: sku.unlimited ? null : (target.remainingData || sku.data),
+        });
+      }
+      if (status === 'awaiting_airalo' || status === 'delivery_failed') {
+        Object.assign(target, {
+          fulfillmentStatus: status,
+          airaloEsimId: null,
+          iccid: null,
+          providerOrderId: null,
+          status: 'pending_install',
+          installGuideStatus: 'not_requested',
+          connectionGuideStatus: 'not_started',
+          usageStatus: 'NOT_ACTIVE',
+          startedAt: null,
+          expiresAt: null,
+        });
+      }
+    }, '已更新供应履约状态');
+  }
+
+  function updateInstallGuide(status) {
+    updateEsim((next, target) => {
+      if (!isDelivered(target)) return;
+      target.installGuideStatus = status;
+    }, '已更新安装引导状态');
+  }
+
+  function updateInstallStatus(status) {
+    updateEsim((next, target) => {
+      if (!isDelivered(target) || !['pending_install', 'installed'].includes(target.status)) return;
+      target.status = status;
+      if (status === 'pending_install') {
+        target.usageStatus = 'NOT_ACTIVE';
+        target.connectionGuideStatus = 'not_started';
+        target.startedAt = null;
+        target.expiresAt = null;
+      }
+      if (status === 'installed') target.usageStatus = 'NOT_ACTIVE';
+    }, '已更新系统安装状态');
+  }
+
+  function updateConnection(status) {
+    updateEsim((next, target) => {
+      if (!isDelivered(target) || !['installed', 'ready_to_connect'].includes(target.status)) return;
+      if (status === 'not_started' && target.status !== 'installed') return;
+      target.connectionGuideStatus = status;
+      if (status === 'completed' && target.status === 'installed') {
+        target.status = 'ready_to_connect';
+      }
+    }, '已更新连接引导状态');
+  }
+
+  function updateUsage(status) {
+    updateEsim((next, target, sku) => {
+      if (!isDelivered(target)) return;
+      setDemoUsage(target, sku, status);
+    }, '已更新供应商用量状态');
+  }
+
+  function setTopUpState(status) {
+    updateEsim((next, target, sku) => {
+      if (!isDelivered(target) || !sku.topUpEnabled) return;
+      let order = next.orders.find((item) => item.id === target.pendingTopUpOrderId);
+      const hasPendingTopUp = target.fulfillmentStatus === 'topup_pending' || Boolean(order);
+      const canStartTopUp = target.topUpEligible !== false && ['FINISHED', 'EXPIRED'].includes(target.usageStatus);
+      if (status === 'topup_pending' && !hasPendingTopUp && !canStartTopUp) return;
+      if (status === 'topup_applied' && !hasPendingTopUp) return;
+      if (status === 'topup_pending' && !order) {
+        const orderId = `demo-topup-${Date.now()}`;
+        order = {
+          id: orderId,
+          skuId: sku.id,
+          airaloPackageId: sku.airaloPackageId,
+          kind: 'topup',
+          parentEsimId: target.id,
+          esimId: target.id,
+          airaloEsimId: target.airaloEsimId,
+          iccid: target.iccid,
+          status: 'paid',
+          paymentStatus: 'paid',
+          amount: sku.price,
+          paymentProvider: 'stripe_demo',
+          provider: 'airalo_partner',
+          providerOrderId: null,
+          requestId: `demo-request-${orderId}`,
+          fulfillmentStatus: 'topup_pending',
+          createdAt: demoNow(),
+        };
+        next.orders.unshift(order);
+        target.pendingTopUpOrderId = orderId;
+      }
+      if (status === 'topup_pending') {
+        order.fulfillmentStatus = 'topup_pending';
+        target.fulfillmentStatus = 'topup_pending';
+        setDemoUsage(target, sku, 'FINISHED');
+      }
+      if (status === 'topup_applied') {
+        const alreadyApplied = (target.topUpHistory || []).some((entry) => (
+          entry.orderId && next.orders.some((item) => item.id === entry.orderId && item.kind === 'topup' && item.fulfillmentStatus === 'topup_applied')
+        ));
+        if (alreadyApplied) return;
+        if (!order) {
+          const orderId = `demo-topup-${Date.now()}`;
+          order = {
+            id: orderId,
+            skuId: sku.id,
+            airaloPackageId: sku.airaloPackageId,
+            kind: 'topup',
+            parentEsimId: target.id,
+            esimId: target.id,
+            airaloEsimId: target.airaloEsimId,
+            iccid: target.iccid,
+            status: 'paid',
+            paymentStatus: 'paid',
+            amount: sku.price,
+            paymentProvider: 'stripe_demo',
+            provider: 'airalo_partner',
+            providerOrderId: `demo-simulated-airalo-topup-${orderId}`,
+            requestId: `demo-request-${orderId}`,
+            fulfillmentStatus: 'topup_applied',
+            createdAt: demoNow(),
+          };
+          next.orders.unshift(order);
+        } else {
+          order.fulfillmentStatus = 'topup_applied';
+          order.providerOrderId = order.providerOrderId || `demo-simulated-airalo-topup-${order.id}`;
+        }
+        target.pendingTopUpOrderId = null;
+        target.fulfillmentStatus = 'delivered';
+        if (!(target.topUpHistory || []).some((entry) => entry.orderId === order.id)) {
+          target.topUpHistory = [...(target.topUpHistory || []), { orderId: order.id, skuId: order.skuId, appliedAt: demoNow() }];
+        }
+        target.currentSkuId = order.skuId;
+        setDemoUsage(target, sku, 'ACTIVE');
+      }
+    }, status === 'topup_pending' ? '已模拟加购同步中' : '已模拟加购同步完成');
+  }
+
+  function navigate(page) {
+    if (['esim-detail', 'install', 'connect'].includes(page) && !controlledEsim) {
+      flash('请先通过场景预设创建一张 eSIM');
+      return;
+    }
+    if (page === 'install' && controlledEsim?.status !== 'pending_install') {
+      flash('当前状态不可进入安装，请先切换到“已交付，待安装”场景');
+      return;
+    }
+    if (page === 'connect' && !['installed', 'ready_to_connect'].includes(controlledEsim?.status)) {
+      flash('当前状态不可进入连接设置，请先切换到“已安装，待连接”场景');
+      return;
+    }
+    if (controlledEsim) {
+      const sku = currentEsimSku(data, controlledEsim);
+      const destination = data.destinations.find((item) => item.catalogId === sku?.catalogId);
+      setSelectedEsimId(controlledEsim.id);
+      setTopUpEsimId(controlledEsim.id);
+      setSelectedSkuId(sku?.id || null);
+      setSelectedDestinationId(destination?.id || 'japan');
+    }
+    go(page, { replace: true });
+  }
+
+  return <section className="demo-console" data-demo-console aria-label="Demo 控制台">
+    <div className="demo-console-heading">
+      <div><SlidersHorizontal /><span>Demo 控制台</span></div>
+      <button className="console-collapse" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</button>
+    </div>
+    {expanded && <div className="demo-console-body">
+      <p className="demo-console-note">仅用于 Demo 评审，不代表 Airalo 或 Stripe 的实时状态。</p>
+      <label className="console-field">
+        <span>场景预设</span>
+        <select defaultValue="" onChange={(event) => {
+          if (event.target.value) {
+            applyScenario(event.target.value);
+            event.target.value = '';
+          }
+        }}>
+          <option value="" disabled>选择状态场景</option>
+          {DEMO_SCENARIOS.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.label}</option>)}
+        </select>
+      </label>
+      <div className="scenario-presets">
+        {DEMO_SCENARIOS.slice(0, 5).map((scenario) => <button key={scenario.id} title={scenario.detail} onClick={() => applyScenario(scenario.id)}>{scenario.label}</button>)}
+      </div>
+      <label className="console-field">
+        <span>当前设备</span>
+        <select value={currentDeviceProfile} onChange={(event) => applyDeviceProfile(event.target.value)}>
+          {DEMO_DEVICE_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+          {currentDeviceProfile === 'custom' && <option value="custom" disabled>{data.profile.deviceModel} · 自定义</option>}
+        </select>
+      </label>
+      <label className="console-field">
+        <span>当前 eSIM</span>
+        <select value={controlledEsim?.id || ''} disabled={!data.esims.length} onChange={(event) => setSelectedEsimId(event.target.value)}>
+          {!data.esims.length && <option value="">暂无 eSIM</option>}
+          {data.esims.map((esim) => {
+            const sku = currentEsimSku(data, esim);
+            const destination = data.destinations.find((item) => item.catalogId === sku?.catalogId);
+            return <option key={esim.id} value={esim.id}>{destination?.name || '旅行'} · {sku ? skuLabel(sku) : esim.id}</option>;
+          })}
+        </select>
+      </label>
+      <div className="console-state-grid">
+        <label className="console-field">
+          <span>供应履约</span>
+          <select value={fulfillmentSelectValue} disabled={!canUpdateFulfillment} onChange={(event) => updateFulfillment(event.target.value)}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            <option value="awaiting_airalo">交付中</option>
+            <option value="delivered">已交付</option>
+            <option value="delivery_failed">交付异常</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>安装引导</span>
+          <select value={controlledEsim?.installGuideStatus || ''} disabled={!canUpdateInstallGuide} onChange={(event) => updateInstallGuide(event.target.value)}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            <option value="not_requested">未请求</option>
+            <option value="opened">已打开</option>
+            <option value="completed">已完成系统操作</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>系统安装</span>
+          <select value={controlledEsim && ['pending_install', 'installed'].includes(controlledEsim.status) ? controlledEsim.status : ''} disabled={!canUpdateInstallStatus} onChange={(event) => updateInstallStatus(event.target.value)}>
+            <option value="" disabled>{controlledEsim ? '已进入连接/使用阶段' : '暂无 eSIM'}</option>
+            <option value="pending_install">待安装</option>
+            <option value="installed">已确认安装</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>连接引导</span>
+          <select value={controlledEsim?.connectionGuideStatus || ''} disabled={!canUpdateConnection} onChange={(event) => updateConnection(event.target.value)}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            {controlledEsim?.status !== 'ready_to_connect' && <option value="not_started">未开始</option>}
+            <option value="completed">已完成</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>供应商用量</span>
+          <select value={controlledEsim?.usageStatus || ''} disabled={!hasDeliveredEsim} onChange={(event) => updateUsage(event.target.value)}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            <option value="NOT_ACTIVE">未激活</option>
+            <option value="ACTIVE">可使用</option>
+            <option value="FINISHED">流量已用尽</option>
+            <option value="EXPIRED">已过期</option>
+            <option value="RECYCLED">已回收</option>
+            <option value="UNKNOWN">待确认</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>加购同步</span>
+          <select value={currentTopUpState} disabled={!canUpdateTopUp} onChange={(event) => {
+            if (event.target.value) setTopUpState(event.target.value);
+          }}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            <option value="">未同步</option>
+            <option value="topup_pending">同步中</option>
+            <option value="topup_applied">已同步</option>
+          </select>
+        </label>
+      </div>
+      <div className="console-navigation" aria-label="快速跳转">
+        <button onClick={() => navigate('store')}>商店</button>
+        <button onClick={() => navigate('my-esims')}>我的 eSIM</button>
+        <button onClick={() => navigate('esim-detail')} disabled={!controlledEsim}>详情</button>
+        <button onClick={() => navigate('install')} disabled={controlledEsim?.status !== 'pending_install'}>安装</button>
+        <button onClick={() => navigate('connect')} disabled={!['installed', 'ready_to_connect'].includes(controlledEsim?.status)}>连接</button>
+        <button onClick={() => navigate('support')}>帮助</button>
+      </div>
+      <button className="console-reset" onClick={onReset}>重置全部演示数据</button>
+    </div>}
+  </section>;
+}
+
 function ReviewPanel({ activeRule, onRule }) {
   const entries = Object.entries(RULES);
-  return <section className="review-panel" data-review-panel>
-    <div className="panel-title"><BookOpenCheck />需求规则</div>
-    {entries.map(([id, item]) => <button key={id} data-review-rule={id} className={activeRule === id ? 'focus' : ''} onClick={() => onRule(id)}>
-      <span>{id}</span><small>{item.title}</small>
-    </button>)}
-  </section>;
+  return <aside className="review-panel" data-review-panel aria-label="PRD 需求追溯">
+    <div className="review-panel-heading">
+      <span>林凡 Review</span>
+      <b>需求追溯</b>
+    </div>
+    <p className="review-panel-help">点击规则定位到对应 Demo 界面，页面中的编号可反向定位当前规则。</p>
+    <nav>
+      {entries.map(([id, item]) => <button key={id} data-review-rule={id} className={activeRule === id ? 'focus' : ''} onClick={() => onRule(id)}>
+        <b>{id}</b>
+        <span>{item.title}</span>
+      </button>)}
+    </nav>
+  </aside>;
 }
 
 function ReviewConnector({ activeRule }) {
   const [line, setLine] = useState(null);
   useLayoutEffect(() => {
+    let frame = 0;
     function measure() {
       if (!activeRule) return setLine(null);
       const workbench = document.querySelector('.workbench');
@@ -245,51 +1125,113 @@ function ReviewConnector({ activeRule }) {
       const from = rule.getBoundingClientRect();
       const to = marker.getBoundingClientRect();
       setLine({
-        x1: from.right - base.left,
+        x1: from.left - base.left,
         y1: from.top - base.top + from.height / 2,
-        x2: to.left - base.left + to.width / 2,
+        x2: to.right - base.left,
         y2: to.top - base.top + to.height / 2,
       });
     }
+    function revealMarker() {
+      const marker = document.querySelector(`[data-review-marker="${activeRule}"]`);
+      const phoneContent = document.querySelector('.phone-content');
+      if (!marker || !phoneContent) return;
+      const markerBox = marker.getBoundingClientRect();
+      const contentBox = phoneContent.getBoundingClientRect();
+      const safeTop = contentBox.top + 42;
+      const safeBottom = contentBox.bottom - 42;
+      if (markerBox.top < safeTop || markerBox.bottom > safeBottom) {
+        phoneContent.scrollTop += markerBox.top - contentBox.top - (phoneContent.clientHeight / 2) + (markerBox.height / 2);
+      }
+    }
+    revealMarker();
     measure();
     window.addEventListener('resize', measure);
-    const timer = window.setTimeout(measure, 80);
+    window.addEventListener('scroll', measure, true);
+    const phoneContent = document.querySelector('.phone-content');
+    phoneContent?.addEventListener('scroll', measure, { passive: true });
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(measure);
+    });
+    const workbench = document.querySelector('.workbench');
+    const rule = document.querySelector(`[data-review-rule="${activeRule}"]`);
+    const marker = document.querySelector(`[data-review-marker="${activeRule}"]`);
+    [workbench, rule, marker, phoneContent].filter(Boolean).forEach((element) => observer.observe(element));
+    const timer = window.setTimeout(() => {
+      revealMarker();
+      measure();
+    }, 100);
     return () => {
       window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+      phoneContent?.removeEventListener('scroll', measure);
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
   }, [activeRule]);
   if (!line) return null;
-  const midX = line.x1 + Math.max(42, (line.x2 - line.x1) * 0.42);
+  const midX = line.x2 + Math.max(42, (line.x1 - line.x2) * 0.42);
   return <svg className="review-connector" data-review-connector aria-hidden="true">
     <path d={`M ${line.x1} ${line.y1} L ${midX} ${line.y1} L ${midX} ${line.y2} L ${line.x2} ${line.y2}`} />
     <circle cx={line.x2} cy={line.y2} r="4" />
   </svg>;
 }
 
+function resolveRenderablePage(page, { data, selectedDestination, selectedSku, selectedEsim }) {
+  if (!PAGE_IDS.has(page)) return 'store';
+
+  const hasDestination = Boolean(selectedDestination && getCatalog(data, selectedDestination.catalogId));
+  const hasMatchingPackage = Boolean(
+    hasDestination
+      && selectedSku
+      && selectedSku.enabled
+      && selectedSku.catalogId === selectedDestination.catalogId
+  );
+  const hasSelectedEsim = Boolean(selectedEsim && currentEsimSku(data, selectedEsim));
+
+  if (page === 'destination') return hasDestination ? page : 'store';
+  if (page === 'plan') return hasMatchingPackage ? page : hasDestination ? 'destination' : 'store';
+  if (page === 'device-check') return hasDestination ? page : 'store';
+  if (page === 'compatibility-checkout') return hasDestination ? page : 'store';
+  if (page === 'checkout') return hasMatchingPackage ? page : hasDestination ? 'destination' : 'store';
+  if (page === 'stripe-checkout') return hasMatchingPackage ? page : hasDestination ? 'checkout' : 'store';
+  if (['esim-detail', 'install', 'connect'].includes(page)) return hasSelectedEsim ? page : 'my-esims';
+  return page;
+}
+
 function PhoneCanvas(props) {
   const { page, go, back, review, onRule } = props;
-  const tabRoot = ['store', 'my-esims'].includes(page);
+  const renderPage = resolveRenderablePage(page, props);
+  const tabRoot = ['store', 'my-esims'].includes(renderPage);
+  useEffect(() => {
+    if (renderPage !== page) go(renderPage, { replace: true });
+  }, [go, page, renderPage]);
+
   return <div className="phone-frame">
     <div className="phone-screen">
       <div className="statusbar"><span>9:41</span><span><Signal size={15}/><Wifi size={15}/><span className="battery">83</span></span></div>
       <div className={`phone-content ${tabRoot ? 'tab-root' : ''}`}>
-        {page === 'store' && <StorePage {...props} />}
-        {page === 'search' && <SearchPage {...props} />}
-        {page === 'destination' && <DestinationPage {...props} />}
-        {page === 'plan' && <PlanPage {...props} />}
-        {page === 'compatibility-checkout' && <CompatibilityCheckoutPage {...props} />}
-        {page === 'checkout' && <CheckoutPage {...props} />}
-        {page === 'stripe-checkout' && <StripeCheckoutPage {...props} />}
-        {page === 'success' && <SuccessPage {...props} />}
-        {page === 'my-esims' && <MyEsimsPage {...props} />}
-        {page === 'esim-detail' && <EsimDetailPage {...props} />}
-        {page === 'install' && <InstallPage {...props} />}
-        {page === 'connect' && <ConnectPage {...props} />}
-        {page === 'onboarding' && <OnboardingPage {...props} />}
-        {page === 'support' && <SupportPage {...props} />}
+        {renderPage === 'store' && <StorePage {...props} />}
+        {renderPage === 'search' && <SearchPage {...props} />}
+        {renderPage === 'destination' && <DestinationPage {...props} />}
+        {renderPage === 'plan' && <PlanPage {...props} />}
+        {renderPage === 'device-check' && <DeviceCompatibilityPage {...props} />}
+        {renderPage === 'compatibility-checkout' && <CompatibilityCheckoutPage {...props} />}
+        {renderPage === 'checkout' && <CheckoutPage {...props} />}
+        {renderPage === 'stripe-checkout' && <StripeCheckoutPage {...props} />}
+        {renderPage === 'success' && <SuccessPage {...props} />}
+        {renderPage === 'my-esims' && <MyEsimsPage {...props} />}
+        {renderPage === 'esim-detail' && <EsimDetailPage {...props} />}
+        {renderPage === 'install' && <InstallPage {...props} />}
+        {renderPage === 'connect' && <ConnectPage {...props} />}
+        {renderPage === 'onboarding' && <OnboardingPage {...props} />}
+        {renderPage === 'support' && <SupportPage {...props} />}
+        {renderPage === 'support-topic' && <SupportTopicPage {...props} />}
+        {renderPage === 'support-article' && <SupportArticlePage {...props} />}
+        {renderPage === 'support-request' && <SupportRequestPage {...props} />}
       </div>
-      {tabRoot && <BottomTabs active={page} onChange={(next) => go(next, { replace: true })} />}
+      {tabRoot && <BottomTabs active={renderPage} onChange={(next) => go(next, { replace: true })} />}
     </div>
   </div>;
 }
@@ -298,12 +1240,12 @@ function TopHome({ review, onRule, onGuide }) {
   return <div className="home-top">
     <div><p>你好，Yiyi!</p><small>为下一段旅程保持连接</small></div>
     <IconButton label="eSIM 使用指南" onClick={onGuide} className="home-guide-button"><Info /></IconButton>
-    <RuleMarker id="FR-A01" review={review} onClick={() => onRule('FR-A01')} />
+    <RuleMarker id="FR-002" review={review} onClick={() => onRule('FR-002')} />
   </div>;
 }
 
 function StorePage(props) {
-  const { data, go, category, setCategory, setSelectedDestinationId, setSelectedSkuId, setCheckoutMode, setTopUpEsimId, review, onRule } = props;
+  const { data, go, category, setCategory, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setPurchaseOnOtherDevice, review, onRule } = props;
   const [activeCard, setActiveCard] = useState(0);
   const [failedCardImages, setFailedCardImages] = useState({});
   const catalogTypes = {
@@ -319,64 +1261,62 @@ function StorePage(props) {
   const carouselTransform = activeCard === 0
     ? 'translateX(0)'
     : `translateX(calc(-${activeCard * (100 / cards.length)}% + ${activeCard * 18}px))`;
-  function openCard(card) {
-    setCheckoutMode('purchase');
-    setTopUpEsimId(null);
-    if (card.action === 'store-unlimited') {
-      const unlimitedSku = data.skus.find((sku) => sku.unlimited && sku.enabled);
-      const destination = unlimitedSku && data.destinations.find((item) => item.catalogId === unlimitedSku.catalogId && item.enabled);
-      if (unlimitedSku && destination) {
-        setSelectedDestinationId(destination.id);
-        setSelectedSkuId(unlimitedSku.id);
-        go('plan');
-        return;
-      }
-    }
-    setCategory('regional');
-    go('store', { replace: true });
-  }
+  useEffect(() => {
+    if (cards.length < 2) return undefined;
+    const timer = window.setInterval(() => setActiveCard((current) => (current + 1) % cards.length), 5000);
+    return () => window.clearInterval(timer);
+  }, [cards.length]);
+
   return <div className="store-page">
     <TopHome {...props} onGuide={() => go('onboarding')} />
     <button className="search-hero" onClick={() => go('search')}><Search /><span>您需要哪里的 eSIM？</span></button>
-    {cards.length > 0 && <section className="home-carousel" aria-label="出行权益">
+    {cards.length > 0 && <section className="home-carousel" aria-label="eSIM 出行说明" aria-roledescription="carousel">
       <div className="carousel-track" style={{ width: `${cards.length * 100}%`, transform: carouselTransform }}>
-        {cards.map((card) => <button className={`benefit-card theme-${card.theme}`} key={card.id} style={{ flexBasis: carouselCardBasis }} onClick={() => openCard(card)}>
-          {failedCardImages[card.id]
-            ? <span className="benefit-graphic" aria-hidden="true"><Globe2 /></span>
-            : <img className="benefit-illustration" src="/hello-esim-travelers.png" alt="" onError={() => setFailedCardImages((current) => ({ ...current, [card.id]: true }))} />}
-          <div className="benefit-copy"><span className="eyebrow">HelloTalk eSIM</span><h2>{card.title}</h2><p>{card.copy}</p></div>
-          <CircleHelp className="benefit-icon" />
-        </button>)}
+        {cards.map((card) => <div className={`benefit-card theme-${card.theme}`} key={card.id} style={{ flexBasis: carouselCardBasis }}>
+          <article className="benefit-card-main">
+            {failedCardImages[card.id]
+              ? <span className="benefit-graphic" aria-hidden="true"><Globe2 /></span>
+              : <img className="benefit-illustration" src="/hello-esim-travelers.png" alt="" onError={() => setFailedCardImages((current) => ({ ...current, [card.id]: true }))} />}
+            <div className="benefit-copy"><span className="eyebrow">HelloTalk eSIM</span><h2>{card.title}</h2><p>{card.copy}</p></div>
+          </article>
+        </div>)}
       </div>
-      <div className="pager-dots">{cards.map((card, index) => <button key={card.id} aria-label={`查看${card.title}`} className={activeCard === index ? 'active' : ''} onClick={() => setActiveCard(index)}><i /></button>)}</div>
+      <div className="pager-dots">{cards.map((card, index) => <button key={card.id} aria-label={`切换至：${card.title}`} aria-current={activeCard === index ? 'true' : undefined} className={activeCard === index ? 'active' : ''} onClick={() => setActiveCard(index)}><i /></button>)}</div>
     </section>}
     <div className="catalog-tabs">{Object.entries(catalogTypes).map(([id, item]) => <button key={id} className={category === id ? 'active' : ''} onClick={() => setCategory(id)}>{item.label}</button>)}</div>
     <p className="catalog-description">{current.description}</p>
     <div className="destination-list">
       {entries.map((destination) => {
         const minPrice = minCatalogPrice(data, destination.catalogId);
-        return <button key={destination.id} className="destination-row" onClick={() => { setCheckoutMode('purchase'); setTopUpEsimId(null); setSelectedDestinationId(destination.id); go('destination'); }}>
+        return <button key={destination.id} className="destination-row" onClick={() => { setCheckoutMode('purchase'); setTopUpEsimId(null); setPurchaseOnOtherDevice(false); setSelectedDestinationId(destination.id); go('destination'); }}>
           <span className="destination-flag">{destination.flag}</span><strong>{destination.name}</strong><span className="price-from">{minPrice === null ? '暂不可售' : `${money(minPrice)} 起`}</span><ChevronRight />
         </button>;
       })}
     </div>
-    <button className="support-fab" aria-label="联系客服" title="联系客服" onClick={() => props.go('support')}><MessageCircle /></button>
+    <button className="support-fab" aria-label="帮助与支持" title="帮助与支持" onClick={() => { props.setSupportContextEsimId(null); props.go('support'); }}><MessageCircle /></button>
   </div>;
 }
 
-function SearchPage({ data, go, back, searchTerm, setSearchTerm, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, review, onRule }) {
+function SearchPage({ data, updateData, go, back, searchTerm, setSearchTerm, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setPurchaseOnOtherDevice, review, onRule }) {
   const normalized = searchTerm.trim().toLowerCase();
   const results = data.destinations.filter((destination) => destination.enabled && (!normalized || destination.name.toLowerCase().includes(normalized)));
+  const hasSearchHistory = data.profile.searchHistory?.length > 0;
+  function selectDestination(destination) {
+    recordDestinationSearch(updateData, destination.id);
+    setCheckoutMode('purchase');
+    setTopUpEsimId(null);
+    setPurchaseOnOtherDevice(false);
+    setSelectedDestinationId(destination.id);
+    go('destination');
+  }
   return <div className="detail-page">
-    <PageHeader title="选择目的地" back={back} rule="FR-A01" review={review} onRule={onRule} />
+    <PageHeader title="选择目的地" back={back} rule="FR-002" review={review} onRule={onRule} />
     <div className="search-input"><Search /><input autoFocus value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="搜索国家或地区" /><button onClick={() => setSearchTerm('')}><X /></button></div>
     <p className="form-help">输入国家、地区或全球套餐。</p>
-    <div className="result-list">{results.map((destination) => {
-      const catalog = getCatalog(data, destination.catalogId);
-      return <button key={destination.id} className="search-result" onClick={() => { setCheckoutMode('purchase'); setTopUpEsimId(null); setSelectedDestinationId(destination.id); go('destination'); }}>
-        <span>{destination.flag}</span><div><strong>{destination.name}</strong><small>{catalog.coverage}</small></div><ChevronRight />
-      </button>;
-    })}</div>
+    {!normalized && hasSearchHistory && <DestinationHistory data={data} onSelect={selectDestination} />}
+    {results.length > 0
+      ? <DestinationRecommendations data={data} destinations={results} onSelect={selectDestination} heading={normalized ? '搜索结果' : '推荐目的地'} />
+      : <p className="search-empty">暂未找到该目的地。</p>}
   </div>;
 }
 
@@ -384,7 +1324,7 @@ function DestinationPage({ data, selectedDestination, checkoutMode, go, back, se
   const catalog = getCatalog(data, selectedDestination.catalogId);
   const skus = data.skus.filter((sku) => sku.catalogId === catalog.id && sku.enabled);
   return <div className="detail-page">
-    <PageHeader title={checkoutMode === 'topup' ? `加购 ${selectedDestination.name}` : selectedDestination.name} back={back} rule="FR-A03" review={review} onRule={onRule} right={<IconButton label="套餐说明" onClick={() => flash('套餐详情包含覆盖范围、有效期、网络和加购条件。')}><MoreHorizontal /></IconButton>} />
+    <PageHeader title={checkoutMode === 'topup' ? `加购 ${selectedDestination.name}` : selectedDestination.name} back={back} rule={checkoutMode === 'topup' ? 'FR-011' : 'FR-002'} review={review} onRule={onRule} right={<IconButton label="套餐说明" onClick={() => flash('套餐详情包含覆盖范围、有效期、网络和加购条件。')}><MoreHorizontal /></IconButton>} />
     <section className="destination-hero"><span>{selectedDestination.flag}</span><div><p>{catalog.coverage}</p><small>{catalog.network} · {catalog.operator}</small></div></section>
     <div className="section-heading"><div><h2>{checkoutMode === 'topup' ? '选择加购套餐' : '选择套餐'}</h2><p>{checkoutMode === 'topup' ? '仅显示当前 eSIM 所在目录的可售套餐。' : `每个套餐仅适用于 ${selectedDestination.name}`}</p></div><Globe2 /></div>
     <div className="plan-list">{skus.map((sku) => <button key={sku.id} className="plan-card" onClick={() => { setSelectedSkuId(sku.id); go('plan'); }}>
@@ -395,9 +1335,14 @@ function DestinationPage({ data, selectedDestination, checkoutMode, go, back, se
   </div>;
 }
 
-function PlanPage({ data, selectedDestination, selectedSku, checkoutMode, go, back, review, onRule }) {
+function PlanPage({ data, selectedDestination, selectedSku, checkoutMode, setCompatibilityReturnPage, go, back, review, onRule }) {
   const catalog = getCatalog(data, selectedSku.catalogId);
   function continueCheckout() {
+    if (checkoutMode === 'purchase' && data.profile.deviceSupport === 'unknown') {
+      setCompatibilityReturnPage('plan');
+      go('device-check');
+      return;
+    }
     if (checkoutMode === 'purchase' && data.profile.deviceSupport === 'unsupported') {
       go('compatibility-checkout');
       return;
@@ -405,7 +1350,7 @@ function PlanPage({ data, selectedDestination, selectedSku, checkoutMode, go, ba
     go('checkout');
   }
   return <div className="detail-page plan-detail">
-    <PageHeader title="套餐详情" back={back} rule="FR-A03" review={review} onRule={onRule} />
+    <PageHeader title="套餐详情" back={back} rule={checkoutMode === 'topup' ? 'FR-011' : 'FR-003'} review={review} onRule={onRule} />
     <section className="plan-detail-card"><span className="large-flag">{selectedDestination.flag}</span><div><h2>{selectedDestination.name} eSIM</h2><p>{catalog.network}</p></div></section>
     <section className="package-grid">
       <div><span>流量</span><strong>{selectedSku.data}</strong></div>
@@ -413,39 +1358,103 @@ function PlanPage({ data, selectedDestination, selectedSku, checkoutMode, go, ba
       <div><span>网络</span><strong>{catalog.network}</strong></div>
       <div><span>加购</span><strong>{selectedSku.topUpEnabled ? '支持' : '不支持'}</strong></div>
     </section>
+    {checkoutMode === 'purchase' && <DeviceCompatibilitySummary
+      data={data}
+      onAction={data.profile.deviceSupport === 'unknown' ? () => {
+        setCompatibilityReturnPage('plan');
+        go('device-check');
+      } : null}
+    />}
     <section className="detail-section"><h3>有效期</h3><p>{planStartCopy(selectedSku)}。{selectedSku.activationPolicy === 'on_network_connect' ? '请在到达目的地后连接支持网络再开始使用。' : '安装完成后请尽快开始行程。'}</p></section>
     <section className="detail-section"><h3>覆盖范围</h3><p>{catalog.coverage}</p></section>
-    <section className="detail-section"><h3>{checkoutMode === 'topup' ? '加购说明' : '安装方式'}</h3><p>{checkoutMode === 'topup' ? '这笔加购仅关联到当前 eSIM，付款完成后从“我的 eSIM”继续查看。' : '购买完成后支持应用内安装、二维码和手动安装。'}</p></section>
+    <section className="detail-section"><h3>{checkoutMode === 'topup' ? '加购说明' : '安装方式'}</h3><p>{checkoutMode === 'topup' ? '这笔加购仅关联到当前 eSIM；付款确认后等待供应商按 ICCID 同步结果。' : '购买完成后仅展示供应商返回且适用于当前设备的安装方式。'}</p></section>
     <footer className="sticky-cta"><div><small>{checkoutMode === 'topup' ? '加购价格' : '总价'}</small><strong>{money(selectedSku.price)}</strong></div><button onClick={continueCheckout}>{checkoutMode === 'topup' ? '继续加购' : '继续'}</button></footer>
   </div>;
 }
 
-function CompatibilityCheckoutPage({ go, back, selectedDestination, review, onRule }) {
-  return <div className="detail-page compatibility-checkout-page">
-    <PageHeader title="确认设备" back={back} rule="FR-A02" review={review} onRule={onRule} />
-    <section className="install-hero"><AlertTriangle /><h2>当前设备不支持 eSIM</h2><p>你可以继续为其他兼容设备购买。付款后，请在那台设备的“我的 eSIM”中完成安装。</p></section>
-    <section className="quiet-note"><Info /><p>{selectedDestination.name} 的套餐仍可查看；本设备不能进行系统安装。</p></section>
-    <button className="outline-action" onClick={() => back('plan')}>返回套餐</button>
-    <button className="primary-action full" onClick={() => go('checkout')}>为兼容设备继续购买</button>
+function DeviceCompatibilityPage({ data, updateData, compatibilityReturnPage, setPurchaseOnOtherDevice, go, back, selectedDestination, review, onRule }) {
+  const [compatibility, setCompatibility] = useState(data.profile.deviceSupport || 'unknown');
+  function selectCompatibility(value) {
+    setCompatibility(value);
+    setPurchaseOnOtherDevice(false);
+    updateData((current) => ({
+      ...current,
+      profile: {
+        ...current.profile,
+        deviceSupport: value,
+        deviceSupportSource: 'user',
+        onboardingCompleted: true,
+      },
+    }));
+    go(compatibilityReturnPage || 'plan', { replace: true });
+  }
+  return <div className="onboarding-page">
+    <PageHeader title="确认设备" back={back} rule="FR-004" review={review} onRule={onRule} />
+    <section className="onboarding-card">
+      <span className="onboarding-step-label">购买前确认</span>
+      <h1>确认您的设备</h1>
+      <p>暂未在兼容目录中识别 {data.profile?.deviceModel || '此设备'}。请选择当前设备的情况。</p>
+      {selectedDestination && <div className="compatibility-destination"><span>{selectedDestination.flag}</span><strong>{selectedDestination.name} eSIM</strong></div>}
+      <div className="compatibility-choice"><Smartphone /><div><strong>此设备是否支持 eSIM？</strong><small>兼容设备也需要确认运营商解锁和可用容量。</small></div></div>
+      <div className="compatibility-options">
+        {[['unknown', '不确定'], ['supported', '支持'], ['unsupported', '不支持']].map(([value, label]) => (
+          <button key={value} className={compatibility === value ? 'selected' : ''} onClick={() => selectCompatibility(value)}>{label}</button>
+        ))}
+      </div>
+    </section>
   </div>;
 }
 
-function CheckoutPage({ data, selectedDestination, selectedSku, checkoutMode, topUpEsim, go, back, review, onRule }) {
+function CompatibilityCheckoutPage({ go, back, setPurchaseOnOtherDevice, selectedDestination, review, onRule }) {
+  return <div className="detail-page compatibility-checkout-page">
+    <PageHeader title="确认设备" back={back} rule="FR-004" review={review} onRule={onRule} />
+    <section className="install-hero"><AlertTriangle /><h2>当前设备不支持 eSIM</h2><p>你可以继续为其他兼容设备购买。付款后，请在那台设备的“我的 eSIM”中完成安装。</p></section>
+    <section className="quiet-note"><Info /><p>{selectedDestination.name} 的套餐仍可查看；本设备不能进行系统安装。</p></section>
+    <button className="outline-action" onClick={() => back('plan')}>返回套餐</button>
+    <button className="primary-action full" onClick={() => { setPurchaseOnOtherDevice(true); go('checkout'); }}>为兼容设备继续购买</button>
+  </div>;
+}
+
+function CheckoutPage({ data, selectedDestination, selectedSku, checkoutMode, topUpEsim, purchaseOnOtherDevice, setCompatibilityReturnPage, go, back, review, onRule }) {
   if (!selectedDestination || !selectedSku) {
     return <div className="detail-page checkout-page">
-      <PageHeader title="确认订单" back={back} rule="FR-A04" review={review} onRule={onRule} />
+      <PageHeader title="确认订单" back={back} rule="FR-005" review={review} onRule={onRule} />
       <section className="install-hero"><Info /><h2>请先选择套餐</h2><p>从目的地页面选择可售套餐后，才能进入 Stripe Checkout。</p></section>
       <button className="primary-action full" onClick={() => go('destination', { replace: true })}>选择套餐</button>
     </div>;
   }
   const topUpSku = topUpEsim && currentEsimSku(data, topUpEsim);
   const isTopUp = checkoutMode === 'topup' && topUpSku?.catalogId === selectedSku.catalogId;
+  const purchaseNeedsCompatibility = !isTopUp && !purchaseOnOtherDevice && data.profile.deviceSupport !== 'supported';
+  function continueToPayment() {
+    if (purchaseOnOtherDevice) {
+      go('stripe-checkout');
+      return;
+    }
+    if (data.profile.deviceSupport === 'unknown') {
+      setCompatibilityReturnPage('checkout');
+      go('device-check');
+      return;
+    }
+    if (data.profile.deviceSupport === 'unsupported') {
+      go('compatibility-checkout');
+      return;
+    }
+    go('stripe-checkout');
+  }
   return <div className="detail-page checkout-page">
-    <PageHeader title={isTopUp ? '确认加购' : '确认订单'} back={back} rule="FR-A04" review={review} onRule={onRule} />
+    <PageHeader title={isTopUp ? '确认加购' : '确认订单'} back={back} rule={isTopUp ? 'FR-011' : 'FR-005'} review={review} onRule={onRule} />
     <section className="order-card"><div><span>{selectedDestination.flag}</span><div><h2>{selectedDestination.name} eSIM</h2><p>{isTopUp ? `加购 · ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</p></div></div><strong>{money(selectedSku.price)}</strong></section>
+    {!isTopUp && <DeviceCompatibilitySummary
+      data={data}
+      onAction={data.profile.deviceSupport === 'unknown' ? () => {
+        setCompatibilityReturnPage('checkout');
+        go('device-check');
+      } : null}
+    />}
     <section className="checkout-section"><div className="line-title"><ShieldCheck /><span>安全结算</span></div><p>付款将跳转至 Stripe Hosted Checkout。HelloTalk 不保存银行卡或支付账户信息。</p></section>
     <section className="price-summary"><div><span>套餐</span><strong>{money(selectedSku.price)}</strong></div><div className="total"><span>应付</span><strong>{money(selectedSku.price)}</strong></div></section>
-    <footer className="sticky-cta"><div><small>应付</small><strong>{money(selectedSku.price)}</strong></div><button onClick={() => go('stripe-checkout')}>{isTopUp ? '前往 Stripe 加购' : '前往 Stripe 付款'}</button></footer>
+    <footer className="sticky-cta"><div><small>应付</small><strong>{money(selectedSku.price)}</strong></div><button onClick={isTopUp ? () => go('stripe-checkout') : continueToPayment}>{isTopUp ? '前往 Stripe 加购' : purchaseNeedsCompatibility ? '确认设备后付款' : '前往 Stripe 付款'}</button></footer>
   </div>;
 }
 
@@ -454,16 +1463,14 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
   const isTopUp = checkoutMode === 'topup' && topUpEsim && topUpSku?.catalogId === selectedSku.catalogId;
   function complete(status) {
     if (status !== 'paid') {
-      flash(status === 'cancelled' ? '已取消 Stripe 付款，未创建 eSIM' : 'Stripe 付款未完成，未创建 eSIM');
+      flash(status === 'cancelled' ? '已取消 Stripe 付款，未创建订单' : 'Stripe 付款未完成，未创建订单');
       go('checkout', { replace: true });
       return;
     }
     const now = new Date().toISOString();
     const orderId = `ord-${Date.now()}`;
     const esimId = `esim-${Date.now()}`;
-    const providerOrderId = `demo-airalo-order-${orderId}`;
-    const providerEsimId = `demo-airalo-esim-${esimId}`;
-    const demoIccid = `demo-iccid-${esimId}`;
+    const requestId = `demo-request-${orderId}`;
     updateData((current) => {
       const next = structuredClone(current);
       next.orders.unshift({
@@ -473,42 +1480,46 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
         kind: isTopUp ? 'topup' : 'purchase',
         parentEsimId: isTopUp ? topUpEsim.id : null,
         esimId: isTopUp ? topUpEsim.id : esimId,
-        airaloEsimId: isTopUp ? topUpEsim.airaloEsimId : providerEsimId,
-        iccid: isTopUp ? topUpEsim.iccid : demoIccid,
+        airaloEsimId: isTopUp ? topUpEsim.airaloEsimId : null,
+        iccid: isTopUp ? topUpEsim.iccid : null,
         status: 'paid',
+        paymentStatus: 'paid',
         amount: selectedSku.price,
         paymentProvider: 'stripe_demo',
         provider: 'airalo_partner',
-        providerOrderId,
-        fulfillmentStatus: isTopUp ? 'topup_applied' : 'fulfilled',
+        providerOrderId: null,
+        requestId,
+        fulfillmentStatus: isTopUp ? 'topup_pending' : 'awaiting_airalo',
         createdAt: now,
       });
       if (isTopUp) {
         const target = next.esims.find((item) => item.id === topUpEsim.id);
         if (target) {
-          const start = new Date();
-          target.status = 'active';
-          target.currentSkuId = selectedSku.id;
-          target.remainingData = selectedSku.unlimited ? null : selectedSku.data;
-          target.startedAt = start.toISOString();
-          target.expiresAt = new Date(start.getTime() + selectedSku.validityDays * 86400000).toISOString();
-          target.lastTopUpProviderOrderId = providerOrderId;
+          target.pendingTopUpOrderId = orderId;
+          target.fulfillmentStatus = 'topup_pending';
         }
       } else {
         next.esims.unshift({
           id: esimId,
           orderId,
           currentSkuId: selectedSku.id,
-          airaloEsimId: providerEsimId,
-          iccid: demoIccid,
+          airaloEsimId: null,
+          iccid: null,
           provider: 'airalo_partner',
-          providerOrderId,
+          providerOrderId: null,
+          requestId,
           status: 'pending_install',
-          fulfillmentStatus: 'ready_for_install',
+          fulfillmentStatus: 'awaiting_airalo',
+          installGuideStatus: 'not_requested',
+          connectionGuideStatus: 'not_started',
+          usageStatus: 'NOT_ACTIVE',
           installMethod: null,
+          installationMethods: ['direct', 'qr', 'manual'],
+          networkSetup: { isRoaming: true, apnType: 'automatic', apnValue: null },
           remainingData: selectedSku.unlimited ? null : selectedSku.data,
           startedAt: null,
           expiresAt: null,
+          topUpHistory: [],
         });
       }
       return next;
@@ -517,11 +1528,11 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
     go('success');
   }
   return <div className="detail-page stripe-checkout-page">
-    <PageHeader title="Stripe Checkout" back={back} rule="FR-A04" review={review} onRule={onRule} />
+    <PageHeader title="Stripe Checkout" back={back} rule={isTopUp ? 'FR-011' : 'FR-005'} review={review} onRule={onRule} />
     <section className="stripe-brand"><strong>stripe</strong><span>Hosted Checkout</span></section>
     <section className="payment-amount"><span>{isTopUp ? '加购应付金额' : '应付金额'}</span><strong>{money(selectedSku.price)}</strong><small>HelloTalk eSIM · {selectedDestination.name} · {isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</small></section>
     <section className="stripe-order"><div><span>商户</span><strong>HelloTalk eSIM</strong></div><div><span>订单内容</span><strong>{isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</strong></div></section>
-    <section className="quiet-note"><ShieldCheck /><p>这是 Stripe Hosted Checkout 的演示承接页。此 Demo 不连接 Stripe API，也不会收集或处理真实支付信息。</p></section>
+    <section className="quiet-note"><ShieldCheck /><p>付款完成后，HelloTalk 会确认付款并发起供应交付或加购同步。支付回跳不等于 eSIM 已交付。</p></section>
     <div className="payment-actions"><button className="secondary-action" onClick={() => complete('cancelled')}>取消付款</button><button className="primary-action" onClick={() => complete('paid')}>支付 {money(selectedSku.price)}</button></div>
   </div>;
 }
@@ -530,191 +1541,402 @@ function SuccessPage({ data, checkoutMode, topUpEsim, selectedEsim, go, review, 
   const latest = checkoutMode === 'topup' ? (selectedEsim || topUpEsim) : data.esims[0];
   const isTopUp = checkoutMode === 'topup' && latest;
   return <div className="success-page">
-    <div className="success-symbol"><ShieldCheck /></div><h1>{isTopUp ? '加购成功' : '购买成功'}</h1><p>{isTopUp ? '新的流量包已关联到当前 eSIM，可返回查看使用状态。' : '你的 eSIM 已添加到“我的 eSIM”。下一步请完成安装与连接。'}</p>
-    <div className="success-ticket"><Package /><div><strong>{isTopUp ? '已更新 eSIM 流量' : '待安装'}</strong><small>{latest ? (isTopUp ? '可在我的 eSIM 中查看新的有效期和余量' : '安装前不会开始使用流量') : ''}</small></div></div>
+    <div className="success-symbol"><ShieldCheck /></div><h1>{isTopUp ? '付款已确认' : '付款已确认'}</h1><p>{isTopUp ? '加购订单正在同步到当前 eSIM，完成后会更新套餐历史和可用流量。' : 'Stripe 已确认付款，HelloTalk 正在等待供应商交付 eSIM。交付完成后才会显示安装入口。'}</p>
+    <div className="success-ticket"><Package /><div><strong>{isTopUp ? '加购同步中' : '供应商交付中'}</strong><small>{latest ? (isTopUp ? '可在 eSIM 详情中查看加购进度' : '可在“我的 eSIM”中查看交付状态') : ''}</small></div></div>
     <button className="primary-action" onClick={() => go(isTopUp ? 'esim-detail' : 'my-esims', { replace: true })}>{isTopUp ? '查看我的 eSIM' : '查看我的 eSIM'}</button>
     <button className="text-action" onClick={() => go('store', { replace: true })}>继续购物</button>
-    <RuleMarker id="FR-A04" review={review} onClick={() => onRule('FR-A04')} />
+    <RuleMarker id={isTopUp ? 'FR-011' : 'FR-006'} review={review} onClick={() => onRule(isTopUp ? 'FR-011' : 'FR-006')} />
   </div>;
 }
 
 function MyEsimsPage({ data, go, setSelectedEsimId, review, onRule }) {
   return <div className="my-esims-page">
-    <TabHeader title="我的 eSIM" rule="FR-A05" review={review} onRule={onRule} />
+    <TabHeader title="我的 eSIM" rule="FR-007" review={review} onRule={onRule} />
     {data.esims.length === 0 ? <div className="empty-esim"><img src="/hello-esim-empty-state.png" alt="" /><h2>eSIM 让出行更轻松</h2><p>提前为下一段旅程准备连接，抵达后即可按指引完成安装与使用。</p><button className="primary-action" onClick={() => go('onboarding')}>了解运作方式</button></div> :
       <div className="esim-list">{data.esims.map((esim) => {
         const sku = currentEsimSku(data, esim);
         const destination = sku && data.destinations.find((entry) => entry.catalogId === sku.catalogId);
         return <button className={`esim-card ${esim.status}`} key={esim.id} onClick={() => { setSelectedEsimId(esim.id); go('esim-detail'); }}>
           <div className="esim-card-top"><span>{destination?.flag || '🌐'}</span><div><h2>{destination?.name || '旅行'} eSIM</h2><p>{sku ? skuLabel(sku) : ''}</p></div><ChevronRight /></div>
-          <div className="esim-status"><span>{statusLabel(esim.status)}</span><strong>{esim.status === 'active' || esim.status === 'low_data' || esim.status === 'expired' ? remainingDataLabel(esim, sku) : '等待下一步'}</strong></div>
+          <div className="esim-status"><span>{esim.fulfillmentStatus === 'topup_pending' ? '加购同步中' : isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</span><strong>{isDelivered(esim) ? remainingDataLabel(esim, sku) : '等待供应商交付'}</strong></div>
         </button>;
       })}</div>}
   </div>;
 }
 
-function statusLabel(status) {
-  return ({ pending_install: '待安装', installed: '已安装', ready_to_connect: '等待连接', active: '使用中', low_data: '流量不足', expired: '已过期' })[status] || status;
+function statusLabel(status, usageStatus) {
+  if (['active', 'low_data', 'expired'].includes(status) && usageStatus) return usageStatusLabel(usageStatus);
+  return ({ pending_install: '待安装', installed: '已安装', ready_to_connect: '等待连接' })[status] || status || '状态待确认';
 }
 
-function EsimDetailPage({ data, selectedEsim, go, back, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, updateData, flash, review, onRule }) {
+function EsimDetailPage({ data, selectedEsim, go, back, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestSubmitted, review, onRule }) {
   if (!selectedEsim) return <MyEsimsPage data={data} go={go} setSelectedEsimId={setSelectedEsimId} review={review} onRule={onRule} />;
   const sku = currentEsimSku(data, selectedEsim);
   const destination = data.destinations.find((item) => item.catalogId === sku.catalogId);
-  const canTopUp = sku.topUpEnabled && ['low_data', 'expired'].includes(selectedEsim.status);
-  function consume() {
-    updateData((current) => {
-      const next = structuredClone(current);
-      const target = next.esims.find((entry) => entry.id === selectedEsim.id);
-      if (target.status === 'active' && !sku.unlimited) {
-        target.status = 'low_data';
-        target.remainingData = lowDataAmount(sku);
-        target.fulfillmentStatus = 'low_data';
-      }
-      return next;
-    });
-    flash('已模拟流量不足状态');
-  }
-  function expire() {
-    updateData((current) => {
-      const next = structuredClone(current);
-      const target = next.esims.find((entry) => entry.id === selectedEsim.id);
-      target.status = 'expired';
-      target.fulfillmentStatus = 'expired';
-      return next;
-    });
-    flash('已模拟套餐过期');
-  }
-  function prepareConnect() {
-    updateData((current) => {
-      const next = structuredClone(current);
-      const target = next.esims.find((entry) => entry.id === selectedEsim.id);
-      if (target?.status === 'installed') target.status = 'ready_to_connect';
-      if (target) target.fulfillmentStatus = 'ready_to_connect';
-      return next;
-    });
-    go('connect');
-  }
+  const delivered = isDelivered(selectedEsim);
+  const topUpPending = selectedEsim.fulfillmentStatus === 'topup_pending';
+  const canTopUp = delivered && !topUpPending && selectedEsim.topUpEligible !== false && sku.topUpEnabled && ['FINISHED', 'EXPIRED'].includes(selectedEsim.usageStatus);
   return <div className="detail-page esim-detail">
-    <PageHeader title="eSIM 详情" back={back} rule="FR-A05" review={review} onRule={onRule} />
-    <section className={`large-esim-card ${selectedEsim.status}`}><div><span>{destination.flag}</span><p>{destination.name} eSIM</p><h2>{statusLabel(selectedEsim.status)}</h2></div><Wifi /></section>
-    <section className="esim-specs"><div><span>套餐</span><strong>{skuLabel(sku)}</strong></div><div><span>剩余流量</span><strong>{remainingDataLabel(selectedEsim, sku)}</strong></div><div><span>有效期</span><strong>{selectedEsim.startedAt ? `${dateLabel(selectedEsim.expiresAt)} 到期` : planStartCopy(sku)}</strong></div></section>
-    {selectedEsim.status === 'pending_install' && <button className="primary-action full" onClick={() => go('install')}>安装或分享 eSIM</button>}
-    {selectedEsim.status === 'installed' && <button className="primary-action full" onClick={prepareConnect}>准备连接</button>}
-    {selectedEsim.status === 'ready_to_connect' && <button className="primary-action full" onClick={() => go('connect')}>连接 eSIM</button>}
+    <PageHeader title="eSIM 详情" back={back} rule="FR-007" secondaryRule="FR-010" review={review} onRule={onRule} />
+    <section className={`large-esim-card ${selectedEsim.status}`}><div><span>{destination.flag}</span><p>{destination.name} eSIM</p><h2>{topUpPending ? '加购同步中' : delivered ? statusLabel(selectedEsim.status, selectedEsim.usageStatus) : deliveryLabel(selectedEsim.fulfillmentStatus)}</h2></div><Wifi /></section>
+    <section className="esim-specs"><div><span>套餐</span><strong>{skuLabel(sku)}</strong></div><div><span>剩余流量</span><strong>{delivered ? remainingDataLabel(selectedEsim, sku) : '交付后显示'}</strong></div><div><span>有效期</span><strong>{selectedEsim.startedAt ? `${dateLabel(selectedEsim.expiresAt)} 到期` : planStartCopy(sku)}</strong></div></section>
+    {!delivered && selectedEsim.fulfillmentStatus === 'awaiting_airalo' && <section className="quiet-note"><Info /><p>支付已确认，正在等待 Airalo 返回供应订单和 eSIM 信息。此阶段不会展示安装入口。</p></section>}
+    {!delivered && selectedEsim.fulfillmentStatus === 'delivery_failed' && <section className="quiet-note"><AlertTriangle /><p>供应交付暂未完成。请稍后查看状态；如长时间未恢复，可联系支持核验订单。</p></section>}
+    {delivered && selectedEsim.status === 'pending_install' && <button className="primary-action full" onClick={() => go('install')}>查看安装指引</button>}
+    {delivered && selectedEsim.status === 'installed' && <button className="primary-action full" onClick={() => go('connect')}>打开连接设置</button>}
+    {delivered && selectedEsim.status === 'ready_to_connect' && <><section className="quiet-note"><Info /><p>已记录连接设置，正在等待供应商确认套餐状态。请在目的地覆盖范围内稍后查看。</p></section><button className="outline-action full" onClick={() => go('connect')}>重新查看连接设置</button></>}
+    {topUpPending && <section className="quiet-note"><Info /><p>付款已确认，正在等待 Airalo 根据 ICCID 同步加购结果。</p></section>}
     {canTopUp && <button className="primary-action full" onClick={() => { setSelectedEsimId(selectedEsim.id); setTopUpEsimId(selectedEsim.id); setCheckoutMode('topup'); setSelectedDestinationId(destination.id); go('destination'); }}>加购流量</button>}
-    {selectedEsim.status === 'active' && <div className="demo-tools">{!sku.unlimited && <button onClick={consume}>模拟流量不足</button>}<button onClick={expire}>模拟过期</button></div>}
-    <section className="detail-section"><h3>安装信息</h3><p>安装后，请在手机设置中开启这张 eSIM 的蜂窝数据与数据漫游，并在到达目的地后连接网络。</p></section>
+    <section className="detail-section"><h3>安装信息</h3><p>安装方式和连接步骤以供应商返回内容为准。HelloTalk 只引导你在手机系统中操作，并以服务端最近一次同步结果展示状态。</p></section>
+    <button className="support-link" onClick={() => { setSupportContextEsimId(selectedEsim.id); setSupportRequestSubmitted(false); go('support-request'); }}>联系支持</button>
   </div>;
 }
 
 function InstallPage({ data, selectedEsim, updateData, go, back, flash, review, onRule }) {
-  const [method, setMethod] = useState('app');
+  const methods = (selectedEsim.installationMethods || ['qr', 'manual'])
+    .filter((method) => method !== 'direct' || directInstallEligible(data.profile));
+  const [method, setMethod] = useState(methods[0] || 'qr');
+  const guideStatus = selectedEsim.installGuideStatus || 'not_requested';
   const steps = [
-    ['app', '应用内安装', Download],
-    ['qr', '使用二维码', QrCode],
-    ['manual', '手动安装', Settings2],
-  ];
-  function install() {
+    ['direct', '直接安装', Download, '由供应商返回系统安装链接，并在当前 iPhone 上继续。'],
+    ['qr', '使用二维码', QrCode, '用另一台设备扫描供应商返回的二维码。'],
+    ['manual', '手动安装', Settings2, '在系统设置中输入供应商返回的信息。'],
+  ].filter(([id]) => methods.includes(id));
+  function openGuide() {
     updateData((current) => {
       const next = structuredClone(current);
       const target = next.esims.find((item) => item.id === selectedEsim.id);
-      if (target.status !== 'pending_install') return current;
-      target.status = 'installed';
-      target.fulfillmentStatus = 'installed';
+      if (!target || !isDelivered(target) || target.status !== 'pending_install') return current;
+      target.installGuideStatus = guideStatus === 'not_requested' ? 'opened' : 'completed';
       target.installMethod = method;
-      const sku = currentEsimSku(next, target);
-      if (sku.activationPolicy === 'on_install') {
-        const now = new Date();
-        target.startedAt = now.toISOString();
-        target.expiresAt = new Date(now.getTime() + sku.validityDays * 86400000).toISOString();
-      }
       return next;
     });
-    flash('安装已完成，请继续连接 eSIM');
+    if (guideStatus === 'not_requested') {
+      flash(method === 'direct' ? '已打开系统安装指引' : '已打开安装信息');
+      return;
+    }
+    flash('已记录系统安装步骤完成，正在等待安装状态更新');
+  }
+  function returnAfterSystemInstall() {
+    flash('已记录系统安装完成，正在等待供应商同步安装状态');
     go('esim-detail', { replace: true });
   }
   return <div className="detail-page install-page">
-    <PageHeader title="安装 eSIM" back={back} rule="FR-A05" review={review} onRule={onRule} />
-    <section className="install-hero"><Smartphone /><h2>选择安装方式</h2><p>同一张 eSIM 只能安装一次。</p></section>
-    {steps.map(([id, label, Icon]) => <button key={id} className={`install-method ${method === id ? 'selected' : ''}`} onClick={() => setMethod(id)}><Icon /><div><strong>{label}</strong><small>{id === 'app' ? '在此设备上开始安装' : id === 'qr' ? '用另一台设备扫描二维码' : '在系统设置中输入信息'}</small></div><span className="radio" /></button>)}
-    {method === 'qr' && <div className="qr-placeholder"><QrCode /><span>演示二维码</span></div>}
+    <PageHeader title="安装 eSIM" back={back} rule="FR-008" review={review} onRule={onRule} />
+    <section className="install-hero"><Smartphone /><h2>选择安装方式</h2><p>仅展示供应商返回且适用于当前设备的方式。打开指引不代表系统已添加。</p></section>
+    {steps.length === 0 && <section className="quiet-note"><Info /><p>当前没有可用的安装方式，请重新获取指引或联系支持。</p></section>}
+    {steps.map(([id, label, Icon, description]) => <button key={id} className={`install-method ${method === id ? 'selected' : ''}`} onClick={() => setMethod(id)}><Icon /><div><strong>{label}</strong><small>{description}</small></div><span className="radio" /></button>)}
+    {method === 'qr' && <div className="qr-placeholder"><QrCode /><span>安装二维码</span></div>}
     {method === 'manual' && <div className="manual-code"><span>SM-DP+ 地址</span><strong>demo.hellotalk.com</strong><span>激活码</span><strong>HT-ESIM-2026</strong></div>}
-    <footer className="sticky-cta"><span /><button onClick={install}>开始安装</button></footer>
+    <section className="quiet-note"><Info /><p>二维码、直装链接和手动安装信息仅在本次查看期间展示，请勿分享或提交到支持请求。</p></section>
+    <footer className="sticky-cta"><span /><button disabled={steps.length === 0} onClick={guideStatus === 'completed' ? returnAfterSystemInstall : openGuide}>{guideStatus === 'not_requested' ? '打开安装指引' : guideStatus === 'opened' ? '我已完成系统操作' : '返回 eSIM 详情'}</button></footer>
   </div>;
 }
 
 function ConnectPage({ data, selectedEsim, updateData, go, back, flash, review, onRule }) {
-  const [checked, setChecked] = useState({ line: false, data: false, roaming: false });
+  const setup = selectedEsim.networkSetup || { isRoaming: true, apnType: 'automatic' };
+  const steps = [
+    ['line', '开启这张 eSIM 线路'],
+    ['data', '将蜂窝数据切换到这张 eSIM'],
+    ...(setup.isRoaming ? [['roaming', '打开数据漫游']] : []),
+    ...(setup.apnType === 'manual' ? [['apn', `按指引填写 APN：${setup.apnValue || '以供应商返回值为准'}`]] : []),
+  ];
+  const [checked, setChecked] = useState(() => Object.fromEntries(steps.map(([id]) => [id, false])));
   const ready = Object.values(checked).every(Boolean);
   function connect() {
     if (!ready) return;
     updateData((current) => {
       const next = structuredClone(current);
       const target = next.esims.find((item) => item.id === selectedEsim.id);
-      if (target.status !== 'ready_to_connect') return current;
-      const sku = currentEsimSku(next, target);
-      target.status = 'active';
-      target.fulfillmentStatus = 'active';
-      if (!target.startedAt) {
-        const now = new Date();
-        target.startedAt = now.toISOString();
-        target.expiresAt = new Date(now.getTime() + sku.validityDays * 86400000).toISOString();
-      }
+      if (!target || !['installed', 'ready_to_connect'].includes(target.status)) return current;
+      target.connectionGuideStatus = 'completed';
+      target.status = 'ready_to_connect';
       return next;
     });
-    flash('连接成功，eSIM 已开始使用');
+    flash('已记录系统设置完成，正在等待套餐状态更新');
     go('esim-detail', { replace: true });
   }
   return <div className="detail-page connect-page">
-    <PageHeader title="连接 eSIM" back={back} rule="FR-A05" review={review} onRule={onRule} />
-    <section className="install-hero"><Wifi /><h2>完成连接设置</h2><p>请在手机系统设置中依次完成以下操作。</p></section>
-    {[['line', '开启这张 eSIM 线路'], ['data', '将蜂窝数据切换到这张 eSIM'], ['roaming', '打开数据漫游']].map(([id, label], index) => <label className="connect-step" key={id}><span>{index + 1}</span><strong>{label}</strong><input type="checkbox" checked={checked[id]} onChange={() => setChecked((value) => ({ ...value, [id]: !value[id] }))} /></label>)}
-    <footer className="sticky-cta"><span /><button disabled={!ready} onClick={connect}>我已完成设置</button></footer>
+    <PageHeader title="连接 eSIM" back={back} rule="FR-009" review={review} onRule={onRule} />
+    <section className="install-hero"><Wifi /><h2>完成连接设置</h2><p>请在手机系统设置中完成供应商返回的步骤。HelloTalk 不会读取或修改系统线路。</p></section>
+    {steps.map(([id, label], index) => <label className="connect-step" key={id}><span>{index + 1}</span><strong>{label}</strong><input type="checkbox" checked={Boolean(checked[id])} onChange={() => setChecked((value) => ({ ...value, [id]: !value[id] }))} /></label>)}
+    <section className="quiet-note"><Info /><p>完成设置不等于已经联网；返回详情后可查看套餐的最新状态。</p></section>
+    <footer className="sticky-cta"><span /><button disabled={!ready} onClick={connect}>我已完成系统设置</button></footer>
   </div>;
 }
 
-function SupportPage({ go, back, flash, review, onRule }) {
-  const topics = [
-    ['安装 eSIM', '购买后可从“我的 eSIM”选择应用内、二维码或手动安装。'],
-    ['连接与使用', '抵达目的地后，在系统设置中启用 eSIM 线路、蜂窝数据和数据漫游。'],
-    ['加购套餐', '仅当当前套餐支持加购，且处于流量不足或过期状态时显示入口。'],
+const SUPPORT_TOPICS = [
+  {
+    id: 'install',
+    title: '安装 eSIM',
+    description: '开始安装、二维码和手动安装。',
+    issue: 'installation',
+    articles: [
+      { id: 'install-start', title: '如何开始安装 eSIM', summary: '从“我的 eSIM”打开已交付的套餐并选择安装方式。', steps: ['确认这张 eSIM 显示为待安装或安装指引可用。', '在“我的 eSIM”打开对应套餐，选择供应商返回的安装方式。', '完成系统引导后回到 HelloTalk，继续查看连接设置。'], note: '打开安装指引或点击系统安装，不代表 eSIM 已添加或已经可以联网。', action: 'install' },
+      { id: 'install-methods', title: '二维码或手动安装时需要注意什么', summary: '二维码需要在另一块屏幕打开；安装信息不可分享。', steps: ['二维码请在另一块屏幕打开后扫描；同一设备无法直接扫描自身屏幕。', '手动安装仅使用本次会话中显示的配置数据。', '二维码、激活码和手动安装信息不要截图、转发或提交到客服请求中。'], note: '若指引过期、无法打开或系统报错，请提交支持请求重新核验。' },
+    ],
+  },
+  {
+    id: 'connect',
+    title: '连接与使用',
+    description: '抵达后启用数据线路并排查网络问题。',
+    issue: 'connection',
+    articles: [
+      { id: 'connect-arrival', title: '抵达目的地后如何连接', summary: '在系统设置中使用旅行 eSIM 作为蜂窝数据线路。', steps: ['在系统设置中确认旅行 eSIM 已启用。', '将蜂窝数据切换到旅行 eSIM，主卡保留通话和短信。', '按该 eSIM 指引决定是否打开数据漫游，并在覆盖范围内刷新状态。'], note: 'HelloTalk 不会读取或替你修改系统中的线路、APN、漫游或网络选择。', action: 'connect' },
+      { id: 'connect-troubleshoot', title: '已完成设置但无法联网', summary: '依次核对安装、数据线路、漫游、APN 和目的地覆盖。', steps: ['确认 eSIM 已在系统中添加，且未超过安装期限。', '确认蜂窝数据正在使用旅行 eSIM，并按套餐要求核对数据漫游。', '只有在该 eSIM 指引要求时才配置 APN 或手动网络选择；随后刷新连接状态。'], note: '飞行模式、未抵达覆盖范围、无网络或供应商查询失败时，可能暂时无法验证连接状态。', action: 'connect' },
+    ],
+  },
+  {
+    id: 'usage',
+    title: '流量、有效期与加购',
+    description: '查看用量、有效期和可加购资格。',
+    issue: 'usage',
+    articles: [
+      { id: 'usage-status', title: '为什么暂时没有实时流量', summary: '用量以供应商同步结果为准，不承诺秒级更新。', steps: ['在“我的 eSIM”打开对应套餐，查看最近一次同步的流量和有效期。', '刷新时会优先读取服务端缓存，避免重复请求供应商。', '若当前套餐或供应商不支持实时用量，会明确显示暂不支持查询。'], note: '没有可验证的供应商数据时，不会用本地估算值代替真实用量。', action: 'detail' },
+      { id: 'usage-topup', title: '为什么没有“加购流量”入口', summary: '加购只在当前 eSIM 返回可售加购包时展示。', steps: ['加购资格由当前 eSIM 的供应商状态和可售加购包决定。', '同一目的地的其他新购套餐不会被当作加购套餐展示。', '套餐过期、已回收或不支持加购时，不会显示加购入口。'], note: '如你认为套餐资格异常，可带着该 eSIM 的上下文提交支持请求。', action: 'topup' },
+    ],
+  },
+  {
+    id: 'payment',
+    title: '付款、订单与退款',
+    description: '支付、交付中、异常订单和退款申请。',
+    issue: 'payment',
+    articles: [
+      { id: 'payment-delivery', title: '付款后暂未看到 eSIM', summary: '支付确认和供应交付是两段独立流程。', steps: ['支付完成后，等待服务端确认 Stripe 付款结果。', '确认后服务端再创建或查询供应订单；交付中不会显示可安装入口。', '若长时间未交付或出现异常，请提交支持请求核验订单状态。'], note: '支付回跳页不作为付款成功或 eSIM 已交付的依据。', action: 'detail' },
+      { id: 'payment-refund', title: '退款、重复扣款或套餐不符', summary: '退款由 HelloTalk 售后流程处理，不会在客户端直接发起 Stripe 或供应商退款。', steps: ['选择付款、订单与退款问题并说明遇到的情况。', '系统会随请求附带必要的内部订单和 eSIM 上下文。', '处理状态会在相关 eSIM 的服务信息中更新。'], note: '请勿在描述中填写银行卡号、二维码、激活码或其他安装敏感信息。', action: 'request' },
+    ],
+  },
+  {
+    id: 'compatibility',
+    title: '设备兼容',
+    description: '确认设备、运营商锁和安装条件。',
+    issue: 'compatibility',
+    articles: [
+      { id: 'compatibility-check', title: '购买前需要确认什么', summary: '设备支持 eSIM、已解锁且有可用 eSIM 容量是不同条件。', steps: ['确认设备型号和系统版本支持 eSIM。', '确认设备没有运营商锁，并保留可添加 eSIM 的容量。', '即使设备兼容，目的地网络可用、安装和激活仍需以实际供应商结果为准。'], note: '兼容性检查不会替代支付后的供应交付或系统安装验证。', action: 'store' },
+    ],
+  },
+];
+
+function resolveSupportEsim(data, supportContextEsimId) {
+  return supportContextEsimId ? data.esims.find((item) => item.id === supportContextEsimId) || null : null;
+}
+
+function SupportPage({ data, supportContextEsimId, setSupportContextEsimId, setSelectedEsimId, setSupportTopic, setSupportArticleId, setSupportRequestIssue, setSupportRequestSubmitted, go, back, review, onRule }) {
+  const esim = resolveSupportEsim(data, supportContextEsimId);
+  const sku = esim && currentEsimSku(data, esim);
+  const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId);
+  const quickAction = esim?.status === 'pending_install'
+    ? { label: '继续安装', page: 'install' }
+    : ['installed', 'ready_to_connect'].includes(esim?.status)
+      ? { label: '查看连接设置', page: 'connect' }
+      : esim ? { label: '查看 eSIM 详情', page: 'esim-detail' } : null;
+  function openTopic(topic) {
+    setSupportTopic(topic.id);
+    setSupportArticleId(topic.articles[0].id);
+    setSupportRequestIssue(topic.issue);
+    go('support-topic');
+  }
+  function openRequest() {
+    setSupportRequestSubmitted(false);
+    go('support-request');
+  }
+  return <div className="detail-page support-page">
+    <PageHeader title="帮助与支持" back={back} rule="FR-012" review={review} onRule={onRule} />
+    <section className="support-intro"><h2>需要帮助吗？</h2><p>先查看与安装、连接、用量、加购和付款相关的指引。</p></section>
+    {esim && <section className="support-esim-context">
+      <div><span>{destination?.flag || '🌐'}</span><div><strong>{destination?.name || '旅行'} eSIM</strong><small>{sku ? skuLabel(sku) : '当前 eSIM'} · {isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</small></div></div>
+      <button onClick={() => { setSelectedEsimId(esim.id); setSupportContextEsimId(esim.id); go(quickAction.page); }}>{quickAction.label}<ChevronRight /></button>
+    </section>}
+    <h2 className="help-section-title">常见问题</h2>
+    <div className="help-list">{SUPPORT_TOPICS.map((topic) => <button key={topic.id} onClick={() => openTopic(topic)}><CircleHelp /><div><strong>{topic.title}</strong><small>{topic.description}</small></div><ChevronRight /></button>)}</div>
+    <section className="support-contact">
+      <MessageCircle /><div><strong>仍然无法解决？</strong><small>{esim ? '提交请求时会附带该 eSIM 的必要订单上下文。' : '提交请求后，可补充与你的问题有关的信息。'}</small></div>
+      <button className="support-link" onClick={openRequest}>联系支持</button>
+    </section>
+  </div>;
+}
+
+function SupportTopicPage({ supportTopic, setSupportArticleId, go, back, review, onRule }) {
+  const topic = SUPPORT_TOPICS.find((item) => item.id === supportTopic) || SUPPORT_TOPICS[0];
+  return <div className="detail-page support-topic-page">
+    <PageHeader title={topic.title} back={back} rule="FR-012" review={review} onRule={onRule} />
+    <section className="support-intro compact"><h2>{topic.title}</h2><p>{topic.description}</p></section>
+    <div className="article-list">{topic.articles.map((article) => <button key={article.id} onClick={() => { setSupportArticleId(article.id); go('support-article'); }}><div><strong>{article.title}</strong><small>{article.summary}</small></div><ChevronRight /></button>)}</div>
+  </div>;
+}
+
+function SupportArticlePage({ data, supportContextEsimId, supportArticleId, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestIssue, setSupportRequestSubmitted, go, back, review, onRule }) {
+  const topic = SUPPORT_TOPICS.find((item) => item.articles.some((article) => article.id === supportArticleId)) || SUPPORT_TOPICS[0];
+  const article = topic.articles.find((item) => item.id === supportArticleId) || topic.articles[0];
+  const esim = resolveSupportEsim(data, supportContextEsimId);
+  const sku = esim && currentEsimSku(data, esim);
+  const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId);
+  const canInstall = article.action === 'install' && esim?.status === 'pending_install';
+  const canConnect = article.action === 'connect' && ['installed', 'ready_to_connect'].includes(esim?.status);
+  const canTopUp = article.action === 'topup' && sku?.topUpEnabled && ['low_data', 'expired'].includes(esim?.status);
+  const opensSupportRequest = article.action === 'request' || (article.action === 'detail' && !esim);
+  function openRequest() {
+    setSupportRequestIssue(topic.issue);
+    setSupportRequestSubmitted(false);
+    go('support-request');
+  }
+  function openAction() {
+    if (opensSupportRequest) {
+      openRequest();
+      return;
+    }
+    if (canInstall) {
+      setSelectedEsimId(esim.id);
+      setSupportContextEsimId(esim.id);
+      go('install');
+      return;
+    }
+    if (canConnect) {
+      setSelectedEsimId(esim.id);
+      setSupportContextEsimId(esim.id);
+      go('connect');
+      return;
+    }
+    if (canTopUp) {
+      setSelectedEsimId(esim.id);
+      setTopUpEsimId(esim.id);
+      setCheckoutMode('topup');
+      setSelectedDestinationId(destination.id);
+      go('destination');
+      return;
+    }
+    if (article.action === 'store') {
+      go('store');
+      return;
+    }
+    if (article.action === 'detail' && !esim) {
+      openRequest();
+      return;
+    }
+    if (esim) {
+      setSelectedEsimId(esim.id);
+      setSupportContextEsimId(esim.id);
+      go('esim-detail');
+      return;
+    }
+    go('my-esims');
+  }
+  const actionLabel = opensSupportRequest ? '联系支持'
+    : canInstall ? '继续安装'
+    : canConnect ? '打开连接设置'
+      : canTopUp ? '查看可加购套餐'
+        : article.action === 'store' ? '前往商店'
+          : article.action === 'detail' && !esim ? '请求订单核验'
+          : esim ? '查看我的 eSIM' : '前往我的 eSIM';
+  return <div className="detail-page support-article-page">
+    <PageHeader title="帮助文章" back={back} rule="FR-012" review={review} onRule={onRule} />
+    <article className="article-content">
+      <span className="article-topic">{topic.title}</span>
+      <h2>{article.title}</h2>
+      <p className="article-summary">{article.summary}</p>
+      <ol>{article.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+      <div className="article-note"><AlertTriangle /><p>{article.note}</p></div>
+    </article>
+    {opensSupportRequest ? (
+      <button className="support-link full" onClick={openRequest}>联系支持</button>
+    ) : (
+      <>
+        <button className="primary-action full" onClick={openAction}>{actionLabel}</button>
+        <button className="support-link" onClick={openRequest}>联系支持</button>
+      </>
+    )}
+  </div>;
+}
+
+function SupportRequestPage({ data, supportContextEsimId, supportRequestIssue, setSupportRequestIssue, supportRequestSubmitted, setSupportRequestSubmitted, go, back, review, onRule }) {
+  const esim = resolveSupportEsim(data, supportContextEsimId);
+  const sku = esim && currentEsimSku(data, esim);
+  const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId);
+  const [description, setDescription] = useState('');
+  const issues = [
+    ['installation', '安装 eSIM'],
+    ['connection', '连接与网络'],
+    ['usage', '流量、有效期或加购'],
+    ['payment', '付款、订单或退款'],
+    ['compatibility', '设备兼容'],
   ];
-  return <div className="detail-page">
-    <PageHeader title="帮助与支持" back={back} rule="FR-A05" review={review} onRule={onRule} />
-    <div className="help-list">{topics.map(([title, description]) => <button key={title} onClick={() => flash(description)}><CircleHelp /><div><strong>{title}</strong><small>{description}</small></div><ChevronRight /></button>)}</div>
-    <button className="primary-action full" onClick={() => go('store', { replace: true })}>返回商店</button>
+  if (supportRequestSubmitted) return <div className="detail-page support-request-page">
+    <PageHeader title="支持请求" back={back} rule="FR-012" review={review} onRule={onRule} />
+    <section className="support-submitted"><ShieldCheck /><h2>支持请求已记录</h2><p>{esim ? '相关 eSIM 的必要订单信息已随请求附带。' : '已记录你的问题，你可返回商店继续浏览。'}</p><small>我们会通过 HelloTalk 支持团队跟进。</small></section>
+    <button className="primary-action full" onClick={() => go(esim ? 'esim-detail' : 'store', { replace: true })}>{esim ? '返回我的 eSIM' : '返回商店'}</button>
+    <button className="text-action support-store-link" onClick={() => go('support', { replace: true })}>返回帮助与支持</button>
+  </div>;
+  return <div className="detail-page support-request-page">
+    <PageHeader title="联系支持" back={back} rule="FR-012" review={review} onRule={onRule} />
+    <section className="support-intro compact"><h2>告诉我们遇到的问题</h2><p>不要填写银行卡信息、二维码、激活码或其他安装敏感内容。</p></section>
+    {esim && <section className="support-request-context"><span>{destination?.flag || '🌐'}</span><div><strong>{destination?.name || '旅行'} eSIM</strong><small>{sku ? skuLabel(sku) : '当前 eSIM'} · {isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</small></div><ShieldCheck /></section>}
+    <form className="support-form" onSubmit={(event) => { event.preventDefault(); if (description.trim()) setSupportRequestSubmitted(true); }}>
+      <label>问题类型<select value={supportRequestIssue} onChange={(event) => setSupportRequestIssue(event.target.value)}>{issues.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+      <label>问题描述<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="请描述你看到的情况、目的地和已尝试的步骤。" maxLength="500" /></label>
+      <small>内部订单和 eSIM 上下文会自动附带；不会显示或提交敏感安装信息。</small>
+      <button className="primary-action" type="submit" disabled={!description.trim()}>提交支持请求</button>
+    </form>
   </div>;
 }
 
-function OnboardingPage({ data, updateData, go, back, setSelectedDestinationId, review, onRule }) {
+function OnboardingPage({ data, updateData, go, back, setSelectedDestinationId, setPurchaseOnOtherDevice, review, onRule }) {
   const [destination, setDestination] = useState('');
-  const [compatibility, setCompatibility] = useState(data.profile.deviceSupport);
   const [step, setStep] = useState(1);
-  const found = data.destinations.find((item) => item.enabled && item.name.includes(destination.trim()));
-  const canContinue = step === 1 ? Boolean(destination.trim() && found) : true;
-  function advance() {
-    if (step === 1) {
-      setSelectedDestinationId(found.id);
-      setStep(2);
+  const [compatibility, setCompatibility] = useState(data.profile.deviceSupport);
+  const normalizedDestination = destination.trim().toLowerCase();
+  const destinationResults = data.destinations.filter((item) => item.enabled && (
+    !normalizedDestination || item.name.toLowerCase().includes(normalizedDestination)
+  ));
+  function selectOnboardingDestination(item) {
+    recordDestinationSearch(updateData, item.id);
+    setPurchaseOnOtherDevice(false);
+    setSelectedDestinationId(item.id);
+    if (data.profile.deviceSupport !== 'unknown') {
+      updateData((current) => ({
+        ...current,
+        profile: { ...current.profile, onboardingCompleted: true },
+      }));
+      go('destination', { replace: true });
       return;
     }
-    if (step === 2) {
-      setStep(3);
-      return;
-    }
-    updateData((current) => ({ ...current, profile: { ...current.profile, deviceSupport: compatibility, onboardingCompleted: true } }));
+    setStep(2);
+  }
+  function selectCompatibility(value) {
+    setCompatibility(value);
+    setPurchaseOnOtherDevice(false);
+    updateData((current) => ({
+      ...current,
+      profile: {
+        ...current.profile,
+        deviceSupport: value,
+        deviceSupportSource: 'user',
+        onboardingCompleted: true,
+      },
+    }));
     go('destination', { replace: true });
   }
   return <div className="onboarding-page">
-    <PageHeader title="" back={back} rule="FR-A02" review={review} onRule={onRule} right={<IconButton label="关闭" onClick={() => back('store')}><X /></IconButton>} />
-    <img src="/hello-esim-travelers.png" alt="" className="onboarding-art" />
-    <section className="onboarding-card"><div className="step-row">{[1, 2, 3].map((item) => <span key={item} className={item <= step ? 'active' : ''} />)}<b>{step}/3</b></div>
-      {step === 1 && <><h1>选择您的目的地</h1><p>HelloTalk eSIM 让您在各个国家、地区乃至全球范围内保持通信畅通。</p><div className="search-input"><Search /><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="例如：法国" /></div>{destination && <div className={found ? 'coverage-check ok' : 'coverage-check fail'}>{found ? <ShieldCheck /> : <X />}{found ? `HelloTalk 已覆盖 ${found.name}。` : '暂未找到该目的地。'}</div>}</>}
-      {step === 2 && <><h1>确认您的设备</h1><p>eSIM 需要设备支持并处于运营商解锁状态。你可以先浏览套餐；不兼容设备将在购买前提示。</p><div className="compatibility-choice"><Smartphone /><div><strong>此设备是否支持 eSIM？</strong><small>可稍后在购买前重新确认。</small></div></div><div className="compatibility-options">{[['unknown', '不确定'], ['supported', '支持'], ['unsupported', '不支持']].map(([value, label]) => <button key={value} className={compatibility === value ? 'selected' : ''} onClick={() => setCompatibility(value)}>{label}</button>)}</div></>}
-      {step === 3 && <><h1>开始挑选套餐</h1><p>{found?.name || '该目的地'}已准备好。套餐会标明流量、有效期、网络和是否支持加购。</p><div className="coverage-check ok"><Check />购买后可在“我的 eSIM”中完成安装与连接。</div></>}
-    </section>
-    <button disabled={!canContinue} className="onboarding-continue" onClick={advance}>{step === 3 ? '浏览套餐' : '继续'}</button>
+    <PageHeader title={step === 1 ? '选择目的地' : '确认设备'} back={back} rule="FR-004" review={review} onRule={onRule} right={<IconButton label="关闭" onClick={() => back('store')}><X /></IconButton>} />
+    {step === 1 && <section className="onboarding-selection">
+      <p className="onboarding-step-label">第 1 步，共 2 步</p>
+      <div className="search-input"><Search /><input autoFocus value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="搜索国家或地区" /><button onClick={() => setDestination('')}><X /></button></div>
+      <p className="form-help">输入国家、地区或全球套餐。</p>
+      {data.profile.searchHistory?.length > 0 && <DestinationHistory data={data} onSelect={selectOnboardingDestination} />}
+      {destinationResults.length > 0
+        ? <DestinationRecommendations data={data} destinations={destinationResults} onSelect={selectOnboardingDestination} />
+        : <p className="search-empty">暂未找到该目的地。</p>}
+    </section>}
+    {step === 2 && <section className="onboarding-card">
+      <span className="onboarding-step-label">第 2 步，共 2 步</span>
+      <h1>确认您的设备</h1>
+      <p>暂未在兼容目录中识别 {data.profile?.deviceModel || '此设备'}。请选择当前设备的情况。</p>
+      <div className="compatibility-choice"><Smartphone /><div><strong>此设备是否支持 eSIM？</strong><small>可稍后在购买前重新确认。</small></div></div>
+      <div className="compatibility-options">
+        {[['unknown', '不确定'], ['supported', '支持'], ['unsupported', '不支持']].map(([value, label]) => (
+          <button key={value} className={compatibility === value ? 'selected' : ''} onClick={() => selectCompatibility(value)}>{label}</button>
+        ))}
+      </div>
+    </section>}
   </div>;
 }
 
