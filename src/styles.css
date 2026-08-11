@@ -1450,3 +1450,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
     overflow: visible;
   }
 }
+
+@media (max-width: 960px) {
+  .demo-console-panel {
+    display: none !important;
+  }
+}

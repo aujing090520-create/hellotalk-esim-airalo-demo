@@ -724,7 +724,7 @@ function AppShell() {
 
   return (
     <main className={`workbench ${review ? 'review-workbench' : ''}`} data-review-mode={review ? 'on' : 'off'}>
-      {review && <aside className="workbench-panel no-print">
+      <aside className="workbench-panel demo-console-panel no-print">
         <DemoConsole
           data={data}
           updateData={updateData}
@@ -750,7 +750,7 @@ function AppShell() {
           }}
           flash={flash}
         />
-      </aside>}
+      </aside>
       <section className="device-stage"><PhoneCanvas {...shared} /></section>
       {review && <ReviewPanel activeRule={activeRule} onRule={goRule} />}
       {review && <ReviewConnector activeRule={activeRule} />}
