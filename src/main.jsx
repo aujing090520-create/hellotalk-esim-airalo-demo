@@ -46,7 +46,7 @@ const RULES = {
   'FR-003': { title: '套餐详情与价格', pages: ['plan', 'destination'], surface: 'app' },
   'FR-004': { title: '设备兼容性提示', pages: ['onboarding', 'compatibility-checkout'], surface: 'app' },
   'FR-005': { title: '确认订单与 Stripe Checkout', pages: ['checkout', 'stripe-checkout'], surface: 'app' },
-  'FR-006': { title: '支付确认与 Airalo 履约', pages: ['success', 'my-esims'], surface: 'app' },
+  'FR-006': { title: '支付确认与 eSIM 交付', pages: ['success', 'my-esims'], surface: 'app' },
   'FR-007': { title: '我的 eSIM 列表与详情', pages: ['my-esims', 'esim-detail'], surface: 'app' },
   'FR-008': { title: 'eSIM 安装', pages: ['install'], surface: 'app' },
   'FR-009': { title: '抵达后连接与故障引导', pages: ['connect', 'support'], surface: 'app' },
@@ -103,15 +103,15 @@ const DEMO_DEVICE_PROFILES = [
 
 const DEMO_SCENARIOS = [
   { id: 'store', label: '初始商店', detail: '没有 eSIM，回到购买入口。' },
-  { id: 'awaiting-airalo', label: '已支付，交付中', detail: 'Stripe 已确认，等待 Airalo 异步交付。' },
+  { id: 'awaiting-airalo', label: '已支付，交付中', detail: 'Stripe 已确认，正在准备 eSIM。' },
   { id: 'pending-install', label: '已交付，待安装', detail: '已获得 eSIM，但尚未打开安装指引。' },
   { id: 'installed', label: '已安装，待连接', detail: '系统已添加 eSIM，尚未完成网络设置。' },
-  { id: 'ready-to-connect', label: '已设置，待验证', detail: '已完成连接引导，等待供应商确认可用。' },
-  { id: 'active', label: '正常可用', detail: '供应商已确认套餐处于可使用状态。' },
+  { id: 'ready-to-connect', label: '已设置，待验证', detail: '已完成连接引导，等待套餐状态更新。' },
+  { id: 'active', label: '正常可用', detail: '套餐状态已更新为可使用。' },
   { id: 'finished', label: '流量已用尽', detail: '可进入加购链路。' },
-  { id: 'expired', label: '套餐已过期', detail: '可进入加购链路，具体资格以供应商为准。' },
+  { id: 'expired', label: '套餐已过期', detail: '可进入加购链路，具体资格以当前套餐为准。' },
   { id: 'topup-pending', label: '加购同步中', detail: 'Stripe 已确认加购，等待按 ICCID 同步。' },
-  { id: 'delivery-failed', label: '交付异常', detail: '支付已确认，但供应履约未成功。' },
+  { id: 'delivery-failed', label: '交付异常', detail: '支付已确认，但 eSIM 暂未准备完成。' },
 ];
 
 function demoNow() {
@@ -837,7 +837,7 @@ function DemoConsole({
           expiresAt: null,
         });
       }
-    }, '已更新供应履约状态');
+    }, '已更新交付状态');
   }
 
   function updateInstallGuide(status) {
@@ -876,7 +876,7 @@ function DemoConsole({
     updateEsim((next, target, sku) => {
       if (!isDelivered(target)) return;
       setDemoUsage(target, sku, status);
-    }, '已更新供应商用量状态');
+    }, '已更新用量状态');
   }
 
   function setTopUpState(status) {
@@ -988,7 +988,7 @@ function DemoConsole({
       <button className="console-collapse" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</button>
     </div>
     {expanded && <div className="demo-console-body">
-      <p className="demo-console-note">仅用于 Demo 评审，不代表 Airalo 或 Stripe 的实时状态。</p>
+      <p className="demo-console-note">仅用于 Demo 评审，不代表服务端或 Stripe 的实时状态。</p>
       <label className="console-field">
         <span>场景预设</span>
         <select defaultValue="" onChange={(event) => {
@@ -1024,7 +1024,7 @@ function DemoConsole({
       </label>
       <div className="console-state-grid">
         <label className="console-field">
-          <span>供应履约</span>
+          <span>交付状态</span>
           <select value={fulfillmentSelectValue} disabled={!canUpdateFulfillment} onChange={(event) => updateFulfillment(event.target.value)}>
             {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
             <option value="awaiting_airalo">交付中</option>
@@ -1058,7 +1058,7 @@ function DemoConsole({
           </select>
         </label>
         <label className="console-field">
-          <span>供应商用量</span>
+          <span>用量状态</span>
           <select value={controlledEsim?.usageStatus || ''} disabled={!hasDeliveredEsim} onChange={(event) => updateUsage(event.target.value)}>
             {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
             <option value="NOT_ACTIVE">未激活</option>
@@ -1367,7 +1367,7 @@ function PlanPage({ data, selectedDestination, selectedSku, checkoutMode, setCom
     />}
     <section className="detail-section"><h3>有效期</h3><p>{planStartCopy(selectedSku)}。{selectedSku.activationPolicy === 'on_network_connect' ? '请在到达目的地后连接支持网络再开始使用。' : '安装完成后请尽快开始行程。'}</p></section>
     <section className="detail-section"><h3>覆盖范围</h3><p>{catalog.coverage}</p></section>
-    <section className="detail-section"><h3>{checkoutMode === 'topup' ? '加购说明' : '安装方式'}</h3><p>{checkoutMode === 'topup' ? '这笔加购仅关联到当前 eSIM；付款确认后等待供应商按 ICCID 同步结果。' : '购买完成后仅展示供应商返回且适用于当前设备的安装方式。'}</p></section>
+    <section className="detail-section"><h3>{checkoutMode === 'topup' ? '加购说明' : '安装方式'}</h3><p>{checkoutMode === 'topup' ? '这笔加购仅关联到当前 eSIM；付款确认后会同步加购结果。' : '购买完成后仅展示适用于当前设备的安装方式。'}</p></section>
     <footer className="sticky-cta"><div><small>{checkoutMode === 'topup' ? '加购价格' : '总价'}</small><strong>{money(selectedSku.price)}</strong></div><button onClick={continueCheckout}>{checkoutMode === 'topup' ? '继续加购' : '继续'}</button></footer>
   </div>;
 }
@@ -1452,7 +1452,7 @@ function CheckoutPage({ data, selectedDestination, selectedSku, checkoutMode, to
         go('device-check');
       } : null}
     />}
-    <section className="checkout-section"><div className="line-title"><ShieldCheck /><span>安全结算</span></div><p>付款将跳转至 Stripe Hosted Checkout。HelloTalk 不保存银行卡或支付账户信息。</p></section>
+    <section className="checkout-section"><div className="line-title"><ShieldCheck /><span>安全结算</span></div><p>付款将跳转至 Stripe Hosted Checkout。HelloTalk 不保存银行卡或支付账户信息，可用支付方式以 Stripe 页面展示为准。</p></section>
     <section className="price-summary"><div><span>套餐</span><strong>{money(selectedSku.price)}</strong></div><div className="total"><span>应付</span><strong>{money(selectedSku.price)}</strong></div></section>
     <footer className="sticky-cta"><div><small>应付</small><strong>{money(selectedSku.price)}</strong></div><button onClick={isTopUp ? () => go('stripe-checkout') : continueToPayment}>{isTopUp ? '前往 Stripe 加购' : purchaseNeedsCompatibility ? '确认设备后付款' : '前往 Stripe 付款'}</button></footer>
   </div>;
@@ -1461,6 +1461,7 @@ function CheckoutPage({ data, selectedDestination, selectedSku, checkoutMode, to
 function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination, checkoutMode, topUpEsim, setSelectedEsimId, go, back, flash, review, onRule }) {
   const topUpSku = topUpEsim && currentEsimSku(data, topUpEsim);
   const isTopUp = checkoutMode === 'topup' && topUpEsim && topUpSku?.catalogId === selectedSku.catalogId;
+  const [paymentMethod, setPaymentMethod] = useState('card');
   function complete(status) {
     if (status !== 'paid') {
       flash(status === 'cancelled' ? '已取消 Stripe 付款，未创建订单' : 'Stripe 付款未完成，未创建订单');
@@ -1532,8 +1533,13 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
     <section className="stripe-brand"><strong>stripe</strong><span>Hosted Checkout</span></section>
     <section className="payment-amount"><span>{isTopUp ? '加购应付金额' : '应付金额'}</span><strong>{money(selectedSku.price)}</strong><small>HelloTalk eSIM · {selectedDestination.name} · {isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</small></section>
     <section className="stripe-order"><div><span>商户</span><strong>HelloTalk eSIM</strong></div><div><span>订单内容</span><strong>{isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</strong></div></section>
-    <section className="quiet-note"><ShieldCheck /><p>付款完成后，HelloTalk 会确认付款并发起供应交付或加购同步。支付回跳不等于 eSIM 已交付。</p></section>
-    <div className="payment-actions"><button className="secondary-action" onClick={() => complete('cancelled')}>取消付款</button><button className="primary-action" onClick={() => complete('paid')}>支付 {money(selectedSku.price)}</button></div>
+    <section className="stripe-payment-methods" aria-label="支付方式">
+      <span>支付方式</span>
+      <button className={paymentMethod === 'card' ? 'selected' : ''} onClick={() => setPaymentMethod('card')}><div><strong>银行卡</strong><small>由 Stripe 安全处理</small></div>{paymentMethod === 'card' && <Check />}</button>
+      <button className={paymentMethod === 'alipay' ? 'selected' : ''} onClick={() => setPaymentMethod('alipay')}><div><strong>支付宝</strong><small>跳转支付宝完成付款</small></div>{paymentMethod === 'alipay' && <Check />}</button>
+    </section>
+    <section className="quiet-note"><ShieldCheck /><p>付款完成后，HelloTalk 会确认付款并处理 eSIM 准备或加购同步。支付回跳不等于 eSIM 已可安装。</p></section>
+    <div className="payment-actions"><button className="secondary-action" onClick={() => complete('cancelled')}>取消付款</button><button className="primary-action" onClick={() => complete('paid')}>{paymentMethod === 'alipay' ? `前往支付宝支付 ${money(selectedSku.price)}` : `支付 ${money(selectedSku.price)}`}</button></div>
   </div>;
 }
 
@@ -1541,8 +1547,8 @@ function SuccessPage({ data, checkoutMode, topUpEsim, selectedEsim, go, review, 
   const latest = checkoutMode === 'topup' ? (selectedEsim || topUpEsim) : data.esims[0];
   const isTopUp = checkoutMode === 'topup' && latest;
   return <div className="success-page">
-    <div className="success-symbol"><ShieldCheck /></div><h1>{isTopUp ? '付款已确认' : '付款已确认'}</h1><p>{isTopUp ? '加购订单正在同步到当前 eSIM，完成后会更新套餐历史和可用流量。' : 'Stripe 已确认付款，HelloTalk 正在等待供应商交付 eSIM。交付完成后才会显示安装入口。'}</p>
-    <div className="success-ticket"><Package /><div><strong>{isTopUp ? '加购同步中' : '供应商交付中'}</strong><small>{latest ? (isTopUp ? '可在 eSIM 详情中查看加购进度' : '可在“我的 eSIM”中查看交付状态') : ''}</small></div></div>
+    <div className="success-symbol"><ShieldCheck /></div><h1>付款已确认</h1><p>{isTopUp ? '加购订单正在同步到当前 eSIM，完成后会更新套餐历史和可用流量。' : '订单正在处理，eSIM 准备完成后将显示安装入口。'}</p>
+    <div className="success-ticket"><Package /><div><strong>{isTopUp ? '加购同步中' : '交付中'}</strong><small>{latest ? (isTopUp ? '可在 eSIM 详情中查看加购进度' : '可在“我的 eSIM”中查看订单进度') : ''}</small></div></div>
     <button className="primary-action" onClick={() => go(isTopUp ? 'esim-detail' : 'my-esims', { replace: true })}>{isTopUp ? '查看我的 eSIM' : '查看我的 eSIM'}</button>
     <button className="text-action" onClick={() => go('store', { replace: true })}>继续购物</button>
     <RuleMarker id={isTopUp ? 'FR-011' : 'FR-006'} review={review} onClick={() => onRule(isTopUp ? 'FR-011' : 'FR-006')} />
@@ -1558,7 +1564,7 @@ function MyEsimsPage({ data, go, setSelectedEsimId, review, onRule }) {
         const destination = sku && data.destinations.find((entry) => entry.catalogId === sku.catalogId);
         return <button className={`esim-card ${esim.status}`} key={esim.id} onClick={() => { setSelectedEsimId(esim.id); go('esim-detail'); }}>
           <div className="esim-card-top"><span>{destination?.flag || '🌐'}</span><div><h2>{destination?.name || '旅行'} eSIM</h2><p>{sku ? skuLabel(sku) : ''}</p></div><ChevronRight /></div>
-          <div className="esim-status"><span>{esim.fulfillmentStatus === 'topup_pending' ? '加购同步中' : isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</span><strong>{isDelivered(esim) ? remainingDataLabel(esim, sku) : '等待供应商交付'}</strong></div>
+          <div className="esim-status"><span>{esim.fulfillmentStatus === 'topup_pending' ? '加购同步中' : isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</span><strong>{isDelivered(esim) ? remainingDataLabel(esim, sku) : '正在准备 eSIM'}</strong></div>
         </button>;
       })}</div>}
   </div>;
@@ -1580,14 +1586,14 @@ function EsimDetailPage({ data, selectedEsim, go, back, setSelectedEsimId, setSe
     <PageHeader title="eSIM 详情" back={back} rule="FR-007" secondaryRule="FR-010" review={review} onRule={onRule} />
     <section className={`large-esim-card ${selectedEsim.status}`}><div><span>{destination.flag}</span><p>{destination.name} eSIM</p><h2>{topUpPending ? '加购同步中' : delivered ? statusLabel(selectedEsim.status, selectedEsim.usageStatus) : deliveryLabel(selectedEsim.fulfillmentStatus)}</h2></div><Wifi /></section>
     <section className="esim-specs"><div><span>套餐</span><strong>{skuLabel(sku)}</strong></div><div><span>剩余流量</span><strong>{delivered ? remainingDataLabel(selectedEsim, sku) : '交付后显示'}</strong></div><div><span>有效期</span><strong>{selectedEsim.startedAt ? `${dateLabel(selectedEsim.expiresAt)} 到期` : planStartCopy(sku)}</strong></div></section>
-    {!delivered && selectedEsim.fulfillmentStatus === 'awaiting_airalo' && <section className="quiet-note"><Info /><p>支付已确认，正在等待 Airalo 返回供应订单和 eSIM 信息。此阶段不会展示安装入口。</p></section>}
-    {!delivered && selectedEsim.fulfillmentStatus === 'delivery_failed' && <section className="quiet-note"><AlertTriangle /><p>供应交付暂未完成。请稍后查看状态；如长时间未恢复，可联系支持核验订单。</p></section>}
+    {!delivered && selectedEsim.fulfillmentStatus === 'awaiting_airalo' && <section className="quiet-note"><Info /><p>支付已确认，正在准备 eSIM。此阶段不会展示安装入口。</p></section>}
+    {!delivered && selectedEsim.fulfillmentStatus === 'delivery_failed' && <section className="quiet-note"><AlertTriangle /><p>eSIM 暂未准备完成。请稍后查看状态；如长时间未恢复，可联系支持核验订单。</p></section>}
     {delivered && selectedEsim.status === 'pending_install' && <button className="primary-action full" onClick={() => go('install')}>查看安装指引</button>}
     {delivered && selectedEsim.status === 'installed' && <button className="primary-action full" onClick={() => go('connect')}>打开连接设置</button>}
-    {delivered && selectedEsim.status === 'ready_to_connect' && <><section className="quiet-note"><Info /><p>已记录连接设置，正在等待供应商确认套餐状态。请在目的地覆盖范围内稍后查看。</p></section><button className="outline-action full" onClick={() => go('connect')}>重新查看连接设置</button></>}
-    {topUpPending && <section className="quiet-note"><Info /><p>付款已确认，正在等待 Airalo 根据 ICCID 同步加购结果。</p></section>}
+    {delivered && selectedEsim.status === 'ready_to_connect' && <><section className="quiet-note"><Info /><p>已记录连接设置，正在等待套餐状态更新。请在目的地覆盖范围内稍后查看。</p></section><button className="outline-action full" onClick={() => go('connect')}>重新查看连接设置</button></>}
+    {topUpPending && <section className="quiet-note"><Info /><p>付款已确认，正在同步加购结果。</p></section>}
     {canTopUp && <button className="primary-action full" onClick={() => { setSelectedEsimId(selectedEsim.id); setTopUpEsimId(selectedEsim.id); setCheckoutMode('topup'); setSelectedDestinationId(destination.id); go('destination'); }}>加购流量</button>}
-    <section className="detail-section"><h3>安装信息</h3><p>安装方式和连接步骤以供应商返回内容为准。HelloTalk 只引导你在手机系统中操作，并以服务端最近一次同步结果展示状态。</p></section>
+    <section className="detail-section"><h3>安装信息</h3><p>安装方式和连接步骤以当前套餐提供的内容为准。HelloTalk 只引导你在手机系统中操作，并以服务端最近一次同步结果展示状态。</p></section>
     <button className="support-link" onClick={() => { setSupportContextEsimId(selectedEsim.id); setSupportRequestSubmitted(false); go('support-request'); }}>联系支持</button>
   </div>;
 }
@@ -1598,9 +1604,9 @@ function InstallPage({ data, selectedEsim, updateData, go, back, flash, review, 
   const [method, setMethod] = useState(methods[0] || 'qr');
   const guideStatus = selectedEsim.installGuideStatus || 'not_requested';
   const steps = [
-    ['direct', '直接安装', Download, '由供应商返回系统安装链接，并在当前 iPhone 上继续。'],
-    ['qr', '使用二维码', QrCode, '用另一台设备扫描供应商返回的二维码。'],
-    ['manual', '手动安装', Settings2, '在系统设置中输入供应商返回的信息。'],
+    ['direct', '直接安装', Download, '在当前 iPhone 上继续系统安装。'],
+    ['qr', '使用二维码', QrCode, '用另一台设备扫描安装二维码。'],
+    ['manual', '手动安装', Settings2, '在系统设置中输入本次提供的安装信息。'],
   ].filter(([id]) => methods.includes(id));
   function openGuide() {
     updateData((current) => {
@@ -1618,12 +1624,12 @@ function InstallPage({ data, selectedEsim, updateData, go, back, flash, review, 
     flash('已记录系统安装步骤完成，正在等待安装状态更新');
   }
   function returnAfterSystemInstall() {
-    flash('已记录系统安装完成，正在等待供应商同步安装状态');
+    flash('已记录系统安装完成，正在等待安装状态更新');
     go('esim-detail', { replace: true });
   }
   return <div className="detail-page install-page">
     <PageHeader title="安装 eSIM" back={back} rule="FR-008" review={review} onRule={onRule} />
-    <section className="install-hero"><Smartphone /><h2>选择安装方式</h2><p>仅展示供应商返回且适用于当前设备的方式。打开指引不代表系统已添加。</p></section>
+    <section className="install-hero"><Smartphone /><h2>选择安装方式</h2><p>仅展示适用于当前设备的安装方式。打开指引不代表系统已添加。</p></section>
     {steps.length === 0 && <section className="quiet-note"><Info /><p>当前没有可用的安装方式，请重新获取指引或联系支持。</p></section>}
     {steps.map(([id, label, Icon, description]) => <button key={id} className={`install-method ${method === id ? 'selected' : ''}`} onClick={() => setMethod(id)}><Icon /><div><strong>{label}</strong><small>{description}</small></div><span className="radio" /></button>)}
     {method === 'qr' && <div className="qr-placeholder"><QrCode /><span>安装二维码</span></div>}
@@ -1639,7 +1645,7 @@ function ConnectPage({ data, selectedEsim, updateData, go, back, flash, review, 
     ['line', '开启这张 eSIM 线路'],
     ['data', '将蜂窝数据切换到这张 eSIM'],
     ...(setup.isRoaming ? [['roaming', '打开数据漫游']] : []),
-    ...(setup.apnType === 'manual' ? [['apn', `按指引填写 APN：${setup.apnValue || '以供应商返回值为准'}`]] : []),
+    ...(setup.apnType === 'manual' ? [['apn', `按指引填写 APN：${setup.apnValue || '以套餐提供的值为准'}`]] : []),
   ];
   const [checked, setChecked] = useState(() => Object.fromEntries(steps.map(([id]) => [id, false])));
   const ready = Object.values(checked).every(Boolean);
@@ -1658,7 +1664,7 @@ function ConnectPage({ data, selectedEsim, updateData, go, back, flash, review, 
   }
   return <div className="detail-page connect-page">
     <PageHeader title="连接 eSIM" back={back} rule="FR-009" review={review} onRule={onRule} />
-    <section className="install-hero"><Wifi /><h2>完成连接设置</h2><p>请在手机系统设置中完成供应商返回的步骤。HelloTalk 不会读取或修改系统线路。</p></section>
+    <section className="install-hero"><Wifi /><h2>完成连接设置</h2><p>请在手机系统设置中完成页面提示的步骤。HelloTalk 不会读取或修改系统线路。</p></section>
     {steps.map(([id, label], index) => <label className="connect-step" key={id}><span>{index + 1}</span><strong>{label}</strong><input type="checkbox" checked={Boolean(checked[id])} onChange={() => setChecked((value) => ({ ...value, [id]: !value[id] }))} /></label>)}
     <section className="quiet-note"><Info /><p>完成设置不等于已经联网；返回详情后可查看套餐的最新状态。</p></section>
     <footer className="sticky-cta"><span /><button disabled={!ready} onClick={connect}>我已完成系统设置</button></footer>
@@ -1672,7 +1678,7 @@ const SUPPORT_TOPICS = [
     description: '开始安装、二维码和手动安装。',
     issue: 'installation',
     articles: [
-      { id: 'install-start', title: '如何开始安装 eSIM', summary: '从“我的 eSIM”打开已交付的套餐并选择安装方式。', steps: ['确认这张 eSIM 显示为待安装或安装指引可用。', '在“我的 eSIM”打开对应套餐，选择供应商返回的安装方式。', '完成系统引导后回到 HelloTalk，继续查看连接设置。'], note: '打开安装指引或点击系统安装，不代表 eSIM 已添加或已经可以联网。', action: 'install' },
+      { id: 'install-start', title: '如何开始安装 eSIM', summary: '从“我的 eSIM”打开已交付的套餐并选择安装方式。', steps: ['确认这张 eSIM 显示为待安装或安装指引可用。', '在“我的 eSIM”打开对应套餐，选择可用的安装方式。', '完成系统引导后回到 HelloTalk，继续查看连接设置。'], note: '打开安装指引或点击系统安装，不代表 eSIM 已添加或已经可以联网。', action: 'install' },
       { id: 'install-methods', title: '二维码或手动安装时需要注意什么', summary: '二维码需要在另一块屏幕打开；安装信息不可分享。', steps: ['二维码请在另一块屏幕打开后扫描；同一设备无法直接扫描自身屏幕。', '手动安装仅使用本次会话中显示的配置数据。', '二维码、激活码和手动安装信息不要截图、转发或提交到客服请求中。'], note: '若指引过期、无法打开或系统报错，请提交支持请求重新核验。' },
     ],
   },
@@ -1683,7 +1689,7 @@ const SUPPORT_TOPICS = [
     issue: 'connection',
     articles: [
       { id: 'connect-arrival', title: '抵达目的地后如何连接', summary: '在系统设置中使用旅行 eSIM 作为蜂窝数据线路。', steps: ['在系统设置中确认旅行 eSIM 已启用。', '将蜂窝数据切换到旅行 eSIM，主卡保留通话和短信。', '按该 eSIM 指引决定是否打开数据漫游，并在覆盖范围内刷新状态。'], note: 'HelloTalk 不会读取或替你修改系统中的线路、APN、漫游或网络选择。', action: 'connect' },
-      { id: 'connect-troubleshoot', title: '已完成设置但无法联网', summary: '依次核对安装、数据线路、漫游、APN 和目的地覆盖。', steps: ['确认 eSIM 已在系统中添加，且未超过安装期限。', '确认蜂窝数据正在使用旅行 eSIM，并按套餐要求核对数据漫游。', '只有在该 eSIM 指引要求时才配置 APN 或手动网络选择；随后刷新连接状态。'], note: '飞行模式、未抵达覆盖范围、无网络或供应商查询失败时，可能暂时无法验证连接状态。', action: 'connect' },
+      { id: 'connect-troubleshoot', title: '已完成设置但无法联网', summary: '依次核对安装、数据线路、漫游、APN 和目的地覆盖。', steps: ['确认 eSIM 已在系统中添加，且未超过安装期限。', '确认蜂窝数据正在使用旅行 eSIM，并按套餐要求核对数据漫游。', '只有在该 eSIM 指引要求时才配置 APN 或手动网络选择；随后刷新连接状态。'], note: '飞行模式、未抵达覆盖范围、无网络或状态查询失败时，可能暂时无法验证连接状态。', action: 'connect' },
     ],
   },
   {
@@ -1692,8 +1698,8 @@ const SUPPORT_TOPICS = [
     description: '查看用量、有效期和可加购资格。',
     issue: 'usage',
     articles: [
-      { id: 'usage-status', title: '为什么暂时没有实时流量', summary: '用量以供应商同步结果为准，不承诺秒级更新。', steps: ['在“我的 eSIM”打开对应套餐，查看最近一次同步的流量和有效期。', '刷新时会优先读取服务端缓存，避免重复请求供应商。', '若当前套餐或供应商不支持实时用量，会明确显示暂不支持查询。'], note: '没有可验证的供应商数据时，不会用本地估算值代替真实用量。', action: 'detail' },
-      { id: 'usage-topup', title: '为什么没有“加购流量”入口', summary: '加购只在当前 eSIM 返回可售加购包时展示。', steps: ['加购资格由当前 eSIM 的供应商状态和可售加购包决定。', '同一目的地的其他新购套餐不会被当作加购套餐展示。', '套餐过期、已回收或不支持加购时，不会显示加购入口。'], note: '如你认为套餐资格异常，可带着该 eSIM 的上下文提交支持请求。', action: 'topup' },
+      { id: 'usage-status', title: '为什么暂时没有实时流量', summary: '用量以最近同步结果为准，不承诺秒级更新。', steps: ['在“我的 eSIM”打开对应套餐，查看最近一次同步的流量和有效期。', '刷新时会优先读取服务端缓存，避免重复请求。', '若当前套餐不支持实时用量，会明确显示暂不支持查询。'], note: '没有可验证的用量数据时，不会用本地估算值代替真实用量。', action: 'detail' },
+      { id: 'usage-topup', title: '为什么没有“加购流量”入口', summary: '加购只在当前 eSIM 返回可售加购包时展示。', steps: ['加购资格由当前 eSIM 的服务状态和可售加购包决定。', '同一目的地的其他新购套餐不会被当作加购套餐展示。', '套餐过期、已回收或不支持加购时，不会显示加购入口。'], note: '如你认为套餐资格异常，可带着该 eSIM 的上下文提交支持请求。', action: 'topup' },
     ],
   },
   {
@@ -1702,8 +1708,8 @@ const SUPPORT_TOPICS = [
     description: '支付、交付中、异常订单和退款申请。',
     issue: 'payment',
     articles: [
-      { id: 'payment-delivery', title: '付款后暂未看到 eSIM', summary: '支付确认和供应交付是两段独立流程。', steps: ['支付完成后，等待服务端确认 Stripe 付款结果。', '确认后服务端再创建或查询供应订单；交付中不会显示可安装入口。', '若长时间未交付或出现异常，请提交支持请求核验订单状态。'], note: '支付回跳页不作为付款成功或 eSIM 已交付的依据。', action: 'detail' },
-      { id: 'payment-refund', title: '退款、重复扣款或套餐不符', summary: '退款由 HelloTalk 售后流程处理，不会在客户端直接发起 Stripe 或供应商退款。', steps: ['选择付款、订单与退款问题并说明遇到的情况。', '系统会随请求附带必要的内部订单和 eSIM 上下文。', '处理状态会在相关 eSIM 的服务信息中更新。'], note: '请勿在描述中填写银行卡号、二维码、激活码或其他安装敏感信息。', action: 'request' },
+      { id: 'payment-delivery', title: '付款后暂未看到 eSIM', summary: '支付确认和 eSIM 准备是两段独立流程。', steps: ['支付完成后，等待服务端确认 Stripe 付款结果。', '确认后服务端会处理 eSIM 准备；交付中不会显示可安装入口。', '若长时间未交付或出现异常，请提交支持请求核验订单状态。'], note: '支付回跳页不作为付款成功或 eSIM 已交付的依据。', action: 'detail' },
+      { id: 'payment-refund', title: '退款、重复扣款或套餐不符', summary: '退款由 HelloTalk 售后流程处理，不会在客户端直接发起退款。', steps: ['选择付款、订单与退款问题并说明遇到的情况。', '系统会随请求附带必要的内部订单和 eSIM 上下文。', '处理状态会在相关 eSIM 的服务信息中更新。'], note: '请勿在描述中填写银行卡号、二维码、激活码或其他安装敏感信息。', action: 'request' },
     ],
   },
   {
@@ -1712,7 +1718,7 @@ const SUPPORT_TOPICS = [
     description: '确认设备、运营商锁和安装条件。',
     issue: 'compatibility',
     articles: [
-      { id: 'compatibility-check', title: '购买前需要确认什么', summary: '设备支持 eSIM、已解锁且有可用 eSIM 容量是不同条件。', steps: ['确认设备型号和系统版本支持 eSIM。', '确认设备没有运营商锁，并保留可添加 eSIM 的容量。', '即使设备兼容，目的地网络可用、安装和激活仍需以实际供应商结果为准。'], note: '兼容性检查不会替代支付后的供应交付或系统安装验证。', action: 'store' },
+      { id: 'compatibility-check', title: '购买前需要确认什么', summary: '设备支持 eSIM、已解锁且有可用 eSIM 容量是不同条件。', steps: ['确认设备型号和系统版本支持 eSIM。', '确认设备没有运营商锁，并保留可添加 eSIM 的容量。', '即使设备兼容，目的地网络可用、安装和激活仍需以实际交付结果为准。'], note: '兼容性检查不会替代支付后的 eSIM 准备或系统安装验证。', action: 'store' },
     ],
   },
 ];

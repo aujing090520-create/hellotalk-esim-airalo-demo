@@ -118,8 +118,8 @@ export function inferDeviceSupport({ platform, deviceModel, deviceRegion } = {})
 
 export const defaultData = {
   integration: {
-    provider: 'airalo_partner',
-    providerName: 'Airalo Partner Platform',
+    provider: 'fulfillment_partner',
+    providerName: '履约渠道',
     environment: 'sandbox',
     packageSource: 'partner_api',
     orderSource: 'partner_api',
