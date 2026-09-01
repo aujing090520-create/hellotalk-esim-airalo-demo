@@ -3,10 +3,13 @@ import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
   Check,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   CircleHelp,
   Clock3,
+  Copy,
   Download,
   Globe2,
   Info,
@@ -14,6 +17,7 @@ import {
   MoreHorizontal,
   Package,
   QrCode,
+  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
@@ -68,6 +72,7 @@ const PAGE_IDS = new Set([
   'my-esims',
   'esim-detail',
   'install',
+  'install-progress',
   'connect',
   'onboarding',
   'support',
@@ -87,6 +92,7 @@ const PAGE_BACK_FALLBACKS = {
   success: 'my-esims',
   'esim-detail': 'my-esims',
   install: 'esim-detail',
+  'install-progress': 'install',
   connect: 'esim-detail',
   onboarding: 'store',
   support: 'store',
@@ -112,6 +118,22 @@ const DEMO_SCENARIOS = [
   { id: 'expired', label: '套餐已过期', detail: '可进入加购链路，具体资格以当前套餐为准。' },
   { id: 'topup-pending', label: '加购同步中', detail: 'Stripe 已确认加购，等待按 ICCID 同步。' },
   { id: 'delivery-failed', label: '交付异常', detail: '支付已确认，但 eSIM 暂未准备完成。' },
+  { id: 'install-capacity', label: '安装受限：SIM 容量不足', detail: '系统要求先停用一张线路。' },
+  { id: 'install-interrupted', label: '安装已中断', detail: '用户取消或离开系统安装流程，可再次开始。' },
+  { id: 'install-failed', label: '安装失败', detail: '系统返回不可恢复安装失败，需要重试或联系支持。' },
+  { id: 'installing', label: '正在添加到设备', detail: '系统正在下载并添加 eSIM。' },
+];
+
+const INSTALL_FLOW_OPTIONS = [
+  ['idle', '未开始'],
+  ['starting', '正在开始安装'],
+  ['capacity_blocked', 'SIM 容量不足'],
+  ['system_permission', '等待系统授权'],
+  ['adding', '正在添加到设备'],
+  ['interrupted', '安装已中断'],
+  ['failed', '安装失败'],
+  ['installed_confirmed', '安装成功待确认'],
+  ['complete', '已确认安装'],
 ];
 
 function demoNow() {
@@ -167,11 +189,12 @@ function createDemoPurchase(data) {
       status: 'pending_install',
       fulfillmentStatus: 'awaiting_airalo',
       installGuideStatus: 'not_requested',
+      installFlowState: 'idle',
       connectionGuideStatus: 'not_started',
       usageStatus: 'NOT_ACTIVE',
       installMethod: null,
       installationMethods: ['direct', 'qr', 'manual'],
-      networkSetup: { isRoaming: true, apnType: 'automatic', apnValue: null },
+      networkSetup: { isRoaming: true, apnType: 'manual', apnValue: 'wbdata' },
       remainingData: sku.unlimited ? null : sku.data,
       startedAt: null,
       expiresAt: null,
@@ -244,7 +267,9 @@ function applyDemoScenario(current, scenarioId) {
       fulfillmentStatus: 'delivered',
       status: 'pending_install',
       installGuideStatus: 'not_requested',
+      installFlowState: 'idle',
       connectionGuideStatus: 'not_started',
+      networkSetup: { isRoaming: true, apnType: 'manual', apnValue: 'wbdata' },
       usageStatus: 'NOT_ACTIVE',
       remainingData: sku.unlimited ? null : sku.data,
       startedAt: null,
@@ -261,6 +286,7 @@ function applyDemoScenario(current, scenarioId) {
       fulfillmentStatus: 'awaiting_airalo',
       status: 'pending_install',
       installGuideStatus: 'not_requested',
+      installFlowState: 'idle',
       connectionGuideStatus: 'not_started',
       usageStatus: 'NOT_ACTIVE',
       startedAt: null,
@@ -272,22 +298,26 @@ function applyDemoScenario(current, scenarioId) {
     delivered();
     target.status = 'installed';
     target.installGuideStatus = 'completed';
+    target.installFlowState = 'complete';
   }
   if (scenarioId === 'ready-to-connect') {
     delivered();
     target.status = 'ready_to_connect';
     target.installGuideStatus = 'completed';
+    target.installFlowState = 'complete';
     target.connectionGuideStatus = 'completed';
   }
   if (scenarioId === 'active') {
     delivered();
     target.installGuideStatus = 'completed';
+    target.installFlowState = 'complete';
     target.connectionGuideStatus = 'completed';
     setDemoUsage(target, sku, 'ACTIVE');
   }
   if (scenarioId === 'finished' || scenarioId === 'expired') {
     delivered();
     target.installGuideStatus = 'completed';
+    target.installFlowState = 'complete';
     target.connectionGuideStatus = 'completed';
     setDemoUsage(target, sku, scenarioId === 'finished' ? 'FINISHED' : 'EXPIRED');
   }
@@ -300,15 +330,27 @@ function applyDemoScenario(current, scenarioId) {
       fulfillmentStatus: 'delivery_failed',
       status: 'pending_install',
       installGuideStatus: 'not_requested',
+      installFlowState: 'idle',
       connectionGuideStatus: 'not_started',
       usageStatus: 'NOT_ACTIVE',
       startedAt: null,
       expiresAt: null,
     });
   }
+  if (['install-capacity', 'install-interrupted', 'install-failed', 'installing'].includes(scenarioId)) {
+    delivered();
+    target.installGuideStatus = 'opened';
+    target.installFlowState = ({
+      'install-capacity': 'capacity_blocked',
+      'install-interrupted': 'interrupted',
+      'install-failed': 'failed',
+      installing: 'adding',
+    })[scenarioId];
+  }
   if (scenarioId === 'topup-pending') {
     delivered();
     target.installGuideStatus = 'completed';
+    target.installFlowState = 'complete';
     target.connectionGuideStatus = 'completed';
     setDemoUsage(target, sku, 'FINISHED');
     const existing = next.orders.find((order) => order.id === target.pendingTopUpOrderId);
@@ -342,7 +384,7 @@ function applyDemoScenario(current, scenarioId) {
 
   return {
     data: next,
-    page: 'esim-detail',
+    page: ['install-capacity', 'installing'].includes(scenarioId) ? 'install-progress' : ['install-interrupted', 'install-failed'].includes(scenarioId) ? 'install' : 'esim-detail',
     esimId: target.id,
     destinationId: destination?.id || 'japan',
     skuId: sku.id,
@@ -562,6 +604,9 @@ function AppShell() {
   const [supportContextEsimId, setSupportContextEsimId] = useState(null);
   const [supportRequestIssue, setSupportRequestIssue] = useState('installation');
   const [supportRequestSubmitted, setSupportRequestSubmitted] = useState(false);
+  const [supportRequestId, setSupportRequestId] = useState('');
+  const [supportRequestDuplicate, setSupportRequestDuplicate] = useState(false);
+  const [supportRequestSimulation, setSupportRequestSimulation] = useState('success');
   const review = initial.get('review') === '1';
   const [toast, setToast] = useState('');
   const [activeRule, setActiveRule] = useState(initial.get('review') === '1' ? 'FR-002' : null);
@@ -665,6 +710,8 @@ function AppShell() {
     if (ruleId === 'FR-012') {
       setSupportContextEsimId(null);
       setSupportRequestSubmitted(false);
+      setSupportRequestId('');
+      setSupportRequestDuplicate(false);
     }
     setNavHistory([]);
     setPage(targetPage);
@@ -720,6 +767,8 @@ function AppShell() {
     supportTopic, setSupportTopic, supportArticleId, setSupportArticleId,
     supportContextEsimId, setSupportContextEsimId,
     supportRequestIssue, setSupportRequestIssue, supportRequestSubmitted, setSupportRequestSubmitted,
+    supportRequestId, setSupportRequestId, supportRequestDuplicate, setSupportRequestDuplicate,
+    supportRequestSimulation,
   };
 
   return (
@@ -737,6 +786,8 @@ function AppShell() {
           go={go}
           applyScenario={applyScenario}
           applyDeviceProfile={applyDeviceProfile}
+          supportRequestSimulation={supportRequestSimulation}
+          setSupportRequestSimulation={setSupportRequestSimulation}
           onReset={() => {
             updateData(cloneDefaultData());
             setNavHistory([]);
@@ -771,6 +822,8 @@ function DemoConsole({
   go,
   applyScenario,
   applyDeviceProfile,
+  supportRequestSimulation,
+  setSupportRequestSimulation,
   onReset,
   flash,
 }) {
@@ -786,6 +839,7 @@ function DemoConsole({
   const canUpdateFulfillment = Boolean(controlledEsim && ['awaiting_airalo', 'delivered', 'delivery_failed'].includes(controlledEsim.fulfillmentStatus));
   const canUpdateInstallGuide = Boolean(hasDeliveredEsim && ['pending_install', 'installed'].includes(controlledEsim.status));
   const canUpdateInstallStatus = Boolean(hasDeliveredEsim && ['pending_install', 'installed'].includes(controlledEsim.status));
+  const canUpdateInstallFlow = Boolean(hasDeliveredEsim && controlledEsim.status === 'pending_install');
   const canUpdateConnection = Boolean(hasDeliveredEsim && ['installed', 'ready_to_connect'].includes(controlledEsim.status));
   const currentTopUpState = topUpSyncState(data, controlledEsim);
   const canUpdateTopUp = Boolean(
@@ -847,17 +901,33 @@ function DemoConsole({
     }, '已更新安装引导状态');
   }
 
+  function updateInstallFlow(flow) {
+    updateEsim((next, target) => {
+      if (!isDelivered(target) || target.status !== 'pending_install') return;
+      target.installFlowState = flow;
+      target.installGuideStatus = flow === 'idle' ? 'not_requested' : 'opened';
+      if (flow === 'installed_confirmed') {
+        target.status = 'installed';
+        target.installGuideStatus = 'completed';
+      }
+    }, '已更新系统安装交接状态');
+  }
+
   function updateInstallStatus(status) {
     updateEsim((next, target) => {
       if (!isDelivered(target) || !['pending_install', 'installed'].includes(target.status)) return;
       target.status = status;
       if (status === 'pending_install') {
+        target.installFlowState = 'idle';
         target.usageStatus = 'NOT_ACTIVE';
         target.connectionGuideStatus = 'not_started';
         target.startedAt = null;
         target.expiresAt = null;
       }
-      if (status === 'installed') target.usageStatus = 'NOT_ACTIVE';
+      if (status === 'installed') {
+        target.usageStatus = 'NOT_ACTIVE';
+        target.installFlowState = 'complete';
+      }
     }, '已更新系统安装状态');
   }
 
@@ -1024,6 +1094,13 @@ function DemoConsole({
       </label>
       <div className="console-state-grid">
         <label className="console-field">
+          <span>支持请求</span>
+          <select value={supportRequestSimulation} onChange={(event) => setSupportRequestSimulation(event.target.value)}>
+            <option value="success">正常提交</option>
+            <option value="failed">模拟提交失败</option>
+          </select>
+        </label>
+        <label className="console-field">
           <span>交付状态</span>
           <select value={fulfillmentSelectValue} disabled={!canUpdateFulfillment} onChange={(event) => updateFulfillment(event.target.value)}>
             {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
@@ -1047,6 +1124,13 @@ function DemoConsole({
             <option value="" disabled>{controlledEsim ? '已进入连接/使用阶段' : '暂无 eSIM'}</option>
             <option value="pending_install">待安装</option>
             <option value="installed">已确认安装</option>
+          </select>
+        </label>
+        <label className="console-field">
+          <span>系统安装交接</span>
+          <select value={controlledEsim?.installFlowState || ''} disabled={!canUpdateInstallFlow} onChange={(event) => updateInstallFlow(event.target.value)}>
+            {!controlledEsim && <option value="" disabled>暂无 eSIM</option>}
+            {INSTALL_FLOW_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
         <label className="console-field">
@@ -1196,7 +1280,7 @@ function resolveRenderablePage(page, { data, selectedDestination, selectedSku, s
   if (page === 'compatibility-checkout') return hasDestination ? page : 'store';
   if (page === 'checkout') return hasMatchingPackage ? page : hasDestination ? 'destination' : 'store';
   if (page === 'stripe-checkout') return hasMatchingPackage ? page : hasDestination ? 'checkout' : 'store';
-  if (['esim-detail', 'install', 'connect'].includes(page)) return hasSelectedEsim ? page : 'my-esims';
+  if (['esim-detail', 'install', 'install-progress', 'connect'].includes(page)) return hasSelectedEsim ? page : 'my-esims';
   return page;
 }
 
@@ -1224,6 +1308,7 @@ function PhoneCanvas(props) {
         {renderPage === 'my-esims' && <MyEsimsPage {...props} />}
         {renderPage === 'esim-detail' && <EsimDetailPage {...props} />}
         {renderPage === 'install' && <InstallPage {...props} />}
+        {renderPage === 'install-progress' && <InstallProgressPage {...props} />}
         {renderPage === 'connect' && <ConnectPage {...props} />}
         {renderPage === 'onboarding' && <OnboardingPage {...props} />}
         {renderPage === 'support' && <SupportPage {...props} />}
@@ -1512,11 +1597,12 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
           status: 'pending_install',
           fulfillmentStatus: 'awaiting_airalo',
           installGuideStatus: 'not_requested',
+          installFlowState: 'idle',
           connectionGuideStatus: 'not_started',
           usageStatus: 'NOT_ACTIVE',
           installMethod: null,
           installationMethods: ['direct', 'qr', 'manual'],
-          networkSetup: { isRoaming: true, apnType: 'automatic', apnValue: null },
+          networkSetup: { isRoaming: true, apnType: 'manual', apnValue: 'wbdata' },
           remainingData: selectedSku.unlimited ? null : selectedSku.data,
           startedAt: null,
           expiresAt: null,
@@ -1531,8 +1617,13 @@ function StripeCheckoutPage({ data, updateData, selectedSku, selectedDestination
   return <div className="detail-page stripe-checkout-page">
     <PageHeader title="Stripe Checkout" back={back} rule={isTopUp ? 'FR-011' : 'FR-005'} review={review} onRule={onRule} />
     <section className="stripe-brand"><strong>stripe</strong><span>Hosted Checkout</span></section>
-    <section className="payment-amount"><span>{isTopUp ? '加购应付金额' : '应付金额'}</span><strong>{money(selectedSku.price)}</strong><small>HelloTalk eSIM · {selectedDestination.name} · {isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</small></section>
-    <section className="stripe-order"><div><span>商户</span><strong>HelloTalk eSIM</strong></div><div><span>订单内容</span><strong>{isTopUp ? `加购 ${skuLabel(selectedSku)}` : skuLabel(selectedSku)}</strong></div></section>
+    <section className="payment-amount"><span>{isTopUp ? '加购应付金额' : '应付金额'}</span><strong>{money(selectedSku.price)}</strong><small>{isTopUp ? '为当前 eSIM 加购流量包' : `${selectedDestination.name} eSIM`}</small></section>
+    <section className="stripe-order" aria-label="套餐信息">
+      <span className="stripe-order-title">套餐信息</span>
+      <div><span>适用地区</span><strong>{selectedDestination.name}</strong></div>
+      <div><span>流量包</span><strong>{selectedSku.unlimited ? '不限流量' : selectedSku.data}</strong></div>
+      <div><span>有效期</span><strong>{selectedSku.validityDays} 天</strong></div>
+    </section>
     <section className="stripe-payment-methods" aria-label="支付方式">
       <span>支付方式</span>
       <button className={paymentMethod === 'card' ? 'selected' : ''} onClick={() => setPaymentMethod('card')}><div><strong>银行卡</strong><small>由 Stripe 安全处理</small></div>{paymentMethod === 'card' && <Check />}</button>
@@ -1555,18 +1646,49 @@ function SuccessPage({ data, checkoutMode, topUpEsim, selectedEsim, go, review, 
   </div>;
 }
 
-function MyEsimsPage({ data, go, setSelectedEsimId, review, onRule }) {
+function MyEsimsPage({ data, updateData, go, setSelectedEsimId, review, onRule }) {
+  const completedInstall = data.esims.find((esim) => esim.installFlowState === 'installed_confirmed' && esim.status === 'installed');
+  function openEsim(esim) {
+    setSelectedEsimId(esim.id);
+    go('esim-detail');
+  }
+  function confirmInstall(nextPage) {
+    if (!completedInstall) return;
+    updateData((current) => {
+      const next = structuredClone(current);
+      const target = next.esims.find((item) => item.id === completedInstall.id);
+      if (target) target.installFlowState = 'complete';
+      return next;
+    });
+    setSelectedEsimId(completedInstall.id);
+    go(nextPage, { replace: true });
+  }
   return <div className="my-esims-page">
     <TabHeader title="我的 eSIM" rule="FR-007" review={review} onRule={onRule} />
     {data.esims.length === 0 ? <div className="empty-esim"><img src="/hello-esim-empty-state.png" alt="" /><h2>eSIM 让出行更轻松</h2><p>提前为下一段旅程准备连接，抵达后即可按指引完成安装与使用。</p><button className="primary-action" onClick={() => go('onboarding')}>了解运作方式</button></div> :
       <div className="esim-list">{data.esims.map((esim) => {
         const sku = currentEsimSku(data, esim);
         const destination = sku && data.destinations.find((entry) => entry.catalogId === sku.catalogId);
-        return <button className={`esim-card ${esim.status}`} key={esim.id} onClick={() => { setSelectedEsimId(esim.id); go('esim-detail'); }}>
-          <div className="esim-card-top"><span>{destination?.flag || '🌐'}</span><div><h2>{destination?.name || '旅行'} eSIM</h2><p>{sku ? skuLabel(sku) : ''}</p></div><ChevronRight /></div>
-          <div className="esim-status"><span>{esim.fulfillmentStatus === 'topup_pending' ? '加购同步中' : isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</span><strong>{isDelivered(esim) ? remainingDataLabel(esim, sku) : '正在准备 eSIM'}</strong></div>
-        </button>;
+        const delivered = isDelivered(esim);
+        const action = !delivered
+          ? null
+          : esim.status === 'pending_install'
+            ? ['安装 eSIM', 'install']
+            : esim.status === 'installed'
+              ? ['进行连接', 'connect']
+              : ['查看详细信息', 'esim-detail'];
+        return <article className={`esim-card ${esim.status}`} key={esim.id}>
+          <button className="esim-card-top" onClick={() => openEsim(esim)}>
+            <span>{destination?.flag || '🌐'}</span><div><h2>{destination?.name || '旅行'} eSIM</h2><p>{sku ? skuLabel(sku) : ''}</p></div><ChevronRight />
+          </button>
+          <div className="esim-card-metrics"><div><span>流量</span><strong>{delivered ? remainingDataLabel(esim, sku) : '准备中'}</strong></div><div><span>有效期</span><strong>{esim.startedAt ? `${dateLabel(esim.expiresAt)} 到期` : sku ? `${sku.validityDays} 天` : '--'}</strong></div></div>
+          <div className="esim-status"><span>{esim.fulfillmentStatus === 'topup_pending' ? '加购同步中' : delivered ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</span><strong>{delivered ? (esim.status === 'installed' ? '请按连接指引完成系统设置' : esim.status === 'pending_install' ? '可开始安装' : '') : '正在准备 eSIM'}</strong></div>
+          {action && <button className={`esim-card-action ${action[1] === 'install' ? 'primary' : ''}`} onClick={() => { setSelectedEsimId(esim.id); go(action[1]); }}>{action[0]}</button>}
+        </article>;
       })}</div>}
+    {completedInstall && <div className="install-complete-overlay" role="dialog" aria-modal="true" aria-label="eSIM 已安装">
+      <div className="install-complete-modal"><div className="install-complete-symbol"><CheckCircle2 /></div><h2>你的 eSIM 已安装</h2><p>进入覆盖区域后，按说明完成连接设置即可使用。</p><div className="install-complete-tip"><Info />不要从设备中删除这张 eSIM。</div><button className="primary-action" onClick={() => confirmInstall('my-esims')}>好的，知道了</button><button className="outline-action" onClick={() => confirmInstall('connect')}>如何连接</button></div>
+    </div>}
   </div>;
 }
 
@@ -1575,99 +1697,144 @@ function statusLabel(status, usageStatus) {
   return ({ pending_install: '待安装', installed: '已安装', ready_to_connect: '等待连接' })[status] || status || '状态待确认';
 }
 
-function EsimDetailPage({ data, selectedEsim, go, back, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestSubmitted, review, onRule }) {
+function EsimDetailPage({ data, selectedEsim, go, back, flash, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestSubmitted, setSupportRequestId, setSupportRequestDuplicate, review, onRule }) {
   if (!selectedEsim) return <MyEsimsPage data={data} go={go} setSelectedEsimId={setSelectedEsimId} review={review} onRule={onRule} />;
+  const [showPackageDetails, setShowPackageDetails] = useState(false);
   const sku = currentEsimSku(data, selectedEsim);
   const destination = data.destinations.find((item) => item.catalogId === sku.catalogId);
+  const catalog = getCatalog(data, sku.catalogId);
   const delivered = isDelivered(selectedEsim);
   const topUpPending = selectedEsim.fulfillmentStatus === 'topup_pending';
   const canTopUp = delivered && !topUpPending && selectedEsim.topUpEligible !== false && sku.topUpEnabled && ['FINISHED', 'EXPIRED'].includes(selectedEsim.usageStatus);
+  const installFlow = selectedEsim.installFlowState || 'idle';
+  const maskedIccid = selectedEsim.iccid ? `${selectedEsim.iccid.slice(0, 4)}••••••••${selectedEsim.iccid.slice(-4)}` : '交付后显示';
+  const installAction = selectedEsim.status === 'pending_install' ? '安装 eSIM' : selectedEsim.status === 'installed' ? '进行连接' : selectedEsim.status === 'ready_to_connect' ? '检查连接' : null;
+  function copyIccid() {
+    navigator.clipboard?.writeText(maskedIccid).catch(() => {});
+    flash('已复制脱敏 ICCID');
+  }
   return <div className="detail-page esim-detail">
-    <PageHeader title="eSIM 详情" back={back} rule="FR-007" secondaryRule="FR-010" review={review} onRule={onRule} />
-    <section className={`large-esim-card ${selectedEsim.status}`}><div><span>{destination.flag}</span><p>{destination.name} eSIM</p><h2>{topUpPending ? '加购同步中' : delivered ? statusLabel(selectedEsim.status, selectedEsim.usageStatus) : deliveryLabel(selectedEsim.fulfillmentStatus)}</h2></div><Wifi /></section>
-    <section className="esim-specs"><div><span>套餐</span><strong>{skuLabel(sku)}</strong></div><div><span>剩余流量</span><strong>{delivered ? remainingDataLabel(selectedEsim, sku) : '交付后显示'}</strong></div><div><span>有效期</span><strong>{selectedEsim.startedAt ? `${dateLabel(selectedEsim.expiresAt)} 到期` : planStartCopy(sku)}</strong></div></section>
+    <PageHeader title={destination.name} back={back} rule="FR-007" secondaryRule="FR-010" review={review} onRule={onRule} />
+    {delivered && selectedEsim.status === 'installed' && <section className="installed-banner"><CheckCircle2 /><p>你的 eSIM 已安装。请勿从设备中删除。</p></section>}
+    {installFlow === 'failed' && <section className="install-state-banner error"><AlertTriangle /><div><strong>eSIM 未安装</strong><p>安装出错了，请重新开始；如仍无法安装，请联系支持。</p></div></section>}
+    {installFlow === 'interrupted' && <section className="install-state-banner warning"><AlertTriangle /><div><strong>eSIM 未安装</strong><p>安装已中断。别担心，你可以随时重新开始。</p></div></section>}
+    <section className={`esim-identity-card ${selectedEsim.status}`}><div className="esim-identity-heading"><span>{destination.flag}</span><h2>{destination.name}</h2><MoreHorizontal /></div><div className="network-line"><Signal /><strong>{catalog?.network || '网络信息待确认'}</strong><span>{catalog?.operator || ''}</span></div><div className="iccid-row"><div><span>ICCID</span><strong>{maskedIccid}</strong></div><button aria-label="复制脱敏 ICCID" onClick={copyIccid}><Copy /></button></div><button className="package-detail-trigger" aria-expanded={showPackageDetails} onClick={() => setShowPackageDetails((value) => !value)}><Package />套餐详细信息<ChevronDown /></button>{showPackageDetails && <div className="package-detail-list"><div><span>适用地区</span><strong>{catalog?.coverage || destination.name}</strong></div><div><span>网络</span><strong>{catalog?.network || '以当地可用网络为准'}</strong></div><div><span>套餐类型</span><strong>{sku.unlimited ? '不限流量' : '总流量'}</strong></div><div><span>生效方式</span><strong>{planStartCopy(sku)}</strong></div></div>}</section>
+    <section className="package-overview"><h3>套餐</h3><div className="package-overview-grid"><div><span>流量</span><strong>{delivered ? remainingDataLabel(selectedEsim, sku) : sku.data}</strong></div><div><span>有效期</span><strong>{selectedEsim.startedAt ? `${dateLabel(selectedEsim.expiresAt)} 到期` : `${sku.validityDays} 天`}</strong></div></div></section>
     {!delivered && selectedEsim.fulfillmentStatus === 'awaiting_airalo' && <section className="quiet-note"><Info /><p>支付已确认，正在准备 eSIM。此阶段不会展示安装入口。</p></section>}
     {!delivered && selectedEsim.fulfillmentStatus === 'delivery_failed' && <section className="quiet-note"><AlertTriangle /><p>eSIM 暂未准备完成。请稍后查看状态；如长时间未恢复，可联系支持核验订单。</p></section>}
-    {delivered && selectedEsim.status === 'pending_install' && <button className="primary-action full" onClick={() => go('install')}>查看安装指引</button>}
-    {delivered && selectedEsim.status === 'installed' && <button className="primary-action full" onClick={() => go('connect')}>打开连接设置</button>}
-    {delivered && selectedEsim.status === 'ready_to_connect' && <><section className="quiet-note"><Info /><p>已记录连接设置，正在等待套餐状态更新。请在目的地覆盖范围内稍后查看。</p></section><button className="outline-action full" onClick={() => go('connect')}>重新查看连接设置</button></>}
+    {delivered && selectedEsim.status === 'ready_to_connect' && <section className="quiet-note"><RefreshCw /><p>正在等待网络状态更新。请在目的地覆盖范围内稍后查看。</p></section>}
     {topUpPending && <section className="quiet-note"><Info /><p>付款已确认，正在同步加购结果。</p></section>}
-    {canTopUp && <button className="primary-action full" onClick={() => { setSelectedEsimId(selectedEsim.id); setTopUpEsimId(selectedEsim.id); setCheckoutMode('topup'); setSelectedDestinationId(destination.id); go('destination'); }}>加购流量</button>}
-    <section className="detail-section"><h3>安装信息</h3><p>安装方式和连接步骤以当前套餐提供的内容为准。HelloTalk 只引导你在手机系统中操作，并以服务端最近一次同步结果展示状态。</p></section>
-    <button className="support-link" onClick={() => { setSupportContextEsimId(selectedEsim.id); setSupportRequestSubmitted(false); go('support-request'); }}>联系支持</button>
+    {(selectedEsim.topUpHistory || []).length > 0 && <section className="history-row"><Clock3 /><div><strong>套餐历史记录</strong><small>已完成 {(selectedEsim.topUpHistory || []).length} 次加购</small></div><ChevronRight /></section>}
+    <section className="detail-section"><h3>安装与连接</h3><p>安装和连接步骤以当前套餐提供的内容为准。HelloTalk 只引导你在手机系统中操作，并以服务端最近一次同步结果展示状态。</p></section>
+    <button className="support-link" onClick={() => { setSupportContextEsimId(selectedEsim.id); setSupportRequestSubmitted(false); setSupportRequestId(''); setSupportRequestDuplicate(false); go('support-request'); }}>联系支持</button>
+    {installAction && <footer className="detail-sticky-cta"><button className="primary-action" onClick={() => go(selectedEsim.status === 'pending_install' ? 'install' : 'connect')}>{installAction}</button></footer>}
+    {canTopUp && <footer className="detail-sticky-cta"><button className="primary-action" onClick={() => { setSelectedEsimId(selectedEsim.id); setTopUpEsimId(selectedEsim.id); setCheckoutMode('topup'); setSelectedDestinationId(destination.id); go('destination'); }}>加购流量</button></footer>}
   </div>;
 }
 
 function InstallPage({ data, selectedEsim, updateData, go, back, flash, review, onRule }) {
   const methods = (selectedEsim.installationMethods || ['qr', 'manual'])
     .filter((method) => method !== 'direct' || directInstallEligible(data.profile));
+  const [showAlternatives, setShowAlternatives] = useState(false);
   const [method, setMethod] = useState(methods[0] || 'qr');
-  const guideStatus = selectedEsim.installGuideStatus || 'not_requested';
+  const installFlow = selectedEsim.installFlowState || 'idle';
   const steps = [
     ['direct', '直接安装', Download, '在当前 iPhone 上继续系统安装。'],
     ['qr', '使用二维码', QrCode, '用另一台设备扫描安装二维码。'],
     ['manual', '手动安装', Settings2, '在系统设置中输入本次提供的安装信息。'],
   ].filter(([id]) => methods.includes(id));
-  function openGuide() {
+  function setInstallFlow(flow, nextPage = null) {
     updateData((current) => {
       const next = structuredClone(current);
       const target = next.esims.find((item) => item.id === selectedEsim.id);
       if (!target || !isDelivered(target) || target.status !== 'pending_install') return current;
-      target.installGuideStatus = guideStatus === 'not_requested' ? 'opened' : 'completed';
+      target.installGuideStatus = 'opened';
+      target.installFlowState = flow;
       target.installMethod = method;
       return next;
     });
-    if (guideStatus === 'not_requested') {
-      flash(method === 'direct' ? '已打开系统安装指引' : '已打开安装信息');
-      return;
-    }
-    flash('已记录系统安装步骤完成，正在等待安装状态更新');
-  }
-  function returnAfterSystemInstall() {
-    flash('已记录系统安装完成，正在等待安装状态更新');
-    go('esim-detail', { replace: true });
+    if (nextPage) go(nextPage);
   }
   return <div className="detail-page install-page">
     <PageHeader title="安装 eSIM" back={back} rule="FR-008" review={review} onRule={onRule} />
-    <section className="install-hero"><Smartphone /><h2>选择安装方式</h2><p>仅展示适用于当前设备的安装方式。打开指引不代表系统已添加。</p></section>
-    {steps.length === 0 && <section className="quiet-note"><Info /><p>当前没有可用的安装方式，请重新获取指引或联系支持。</p></section>}
-    {steps.map(([id, label, Icon, description]) => <button key={id} className={`install-method ${method === id ? 'selected' : ''}`} onClick={() => setMethod(id)}><Icon /><div><strong>{label}</strong><small>{description}</small></div><span className="radio" /></button>)}
-    {method === 'qr' && <div className="qr-placeholder"><QrCode /><span>安装二维码</span></div>}
-    {method === 'manual' && <div className="manual-code"><span>SM-DP+ 地址</span><strong>demo.hellotalk.com</strong><span>激活码</span><strong>HT-ESIM-2026</strong></div>}
-    <section className="quiet-note"><Info /><p>二维码、直装链接和手动安装信息仅在本次查看期间展示，请勿分享或提交到支持请求。</p></section>
-    <footer className="sticky-cta"><span /><button disabled={steps.length === 0} onClick={guideStatus === 'completed' ? returnAfterSystemInstall : openGuide}>{guideStatus === 'not_requested' ? '打开安装指引' : guideStatus === 'opened' ? '我已完成系统操作' : '返回 eSIM 详情'}</button></footer>
+    {installFlow === 'failed' && <section className="install-state-banner error"><AlertTriangle /><div><strong>eSIM 未安装</strong><p>出错了，请重试。如果仍然无法安装，请联系支持。</p></div></section>}
+    {installFlow === 'interrupted' && <section className="install-state-banner warning"><AlertTriangle /><div><strong>eSIM 未安装</strong><p>安装已中断。别担心，你可以随时重新开始。</p></div></section>}
+    <section className="install-intro"><img src="/hello-esim-travelers.png" alt="" /><h2>你可以直接在此设备上安装 eSIM</h2><p>这个过程通常需要几分钟。请在稳定的网络环境下继续，并在系统提示时确认添加。</p><ul><li><Wifi />保持连接到互联网</li><li><X />请勿退出或中断安装过程</li><li><Smartphone />为新的 eSIM 设置一个易识别的标签</li><li><Signal />选择用于流量的新 eSIM</li></ul></section>
+    {showAlternatives && <section className="install-alternatives"><h3>其他安装方式</h3>{steps.map(([id, label, Icon, description]) => <button key={id} className={`install-method ${method === id ? 'selected' : ''}`} onClick={() => setMethod(id)}><Icon /><div><strong>{label}</strong><small>{description}</small></div><span className="radio" /></button>)}{method === 'qr' && <div className="qr-placeholder"><QrCode /><span>安装二维码</span></div>}{method === 'manual' && <div className="manual-code"><span>SM-DP+ 地址</span><strong>仅当前会话展示</strong><span>激活码</span><strong>仅当前会话展示</strong></div>}<p>二维码、直装链接和手动安装信息仅在本次查看期间展示，请勿转发或提交到支持请求。</p></section>}
+    <footer className="install-action-footer"><button className="primary-action" disabled={steps.length === 0} onClick={() => setInstallFlow('starting', 'install-progress')}>开始安装</button><button className="outline-action" onClick={() => setShowAlternatives((value) => !value)}>{showAlternatives ? '收起其他方式' : '其他安装方式'}</button></footer>
+  </div>;
+}
+
+function InstallProgressPage({ selectedEsim, updateData, go }) {
+  const flow = selectedEsim.installFlowState || 'starting';
+  function updateFlow(nextFlow, options = {}) {
+    updateData((current) => {
+      const next = structuredClone(current);
+      const target = next.esims.find((item) => item.id === selectedEsim.id);
+      if (!target) return current;
+      target.installFlowState = nextFlow;
+      if (options.installed) {
+        target.status = 'installed';
+        target.installGuideStatus = 'completed';
+      }
+      return next;
+    });
+  }
+  useEffect(() => {
+    if (flow !== 'starting' && flow !== 'adding') return undefined;
+    const timer = window.setTimeout(() => {
+      if (flow === 'starting') updateFlow('system_permission');
+      if (flow === 'adding') {
+        updateFlow('installed_confirmed', { installed: true });
+        go('my-esims', { replace: true });
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [flow]);
+  const isAdding = flow === 'adding';
+  return <div className="install-progress-page">
+    <div className="install-progress-logo"><i /><i /><i /></div>
+    <h1>{isAdding ? '正在添加到设备...' : '正在开始安装...'}</h1>
+    <p>请留在此界面，该流程可能需要几分钟。</p>
+    <div className="install-progress-track"><i style={{ width: isAdding ? '60%' : '16%' }} /></div>
+    <div className="install-progress-tips"><span><Wifi />保持连接到互联网</span><span><Smartphone />请勿关闭或退出应用</span></div>
+    {flow === 'capacity_blocked' && <div className="system-sheet"><h2>需要关闭一张 SIM 才能继续</h2><p>这台设备当前可同时使用的线路已满。关闭一张 SIM 不会取消其服务。</p><button onClick={() => updateFlow('system_permission')}>关闭主卡并继续</button><button onClick={() => { updateFlow('interrupted'); go('install', { replace: true }); }}>取消</button></div>}
+    {flow === 'system_permission' && <div className="system-sheet"><h2>允许运营商设置 eSIM 吗？</h2><p>eSIM 下载后将立即用于安装。系统可能会继续请求确认。</p><div><button onClick={() => { updateFlow('interrupted'); go('install', { replace: true }); }}>暂不</button><button className="system-confirm" onClick={() => updateFlow('adding')}>允许</button></div></div>}
   </div>;
 }
 
 function ConnectPage({ data, selectedEsim, updateData, go, back, flash, review, onRule }) {
   const setup = selectedEsim.networkSetup || { isRoaming: true, apnType: 'automatic' };
   const steps = [
-    ['line', '开启这张 eSIM 线路'],
-    ['data', '将蜂窝数据切换到这张 eSIM'],
-    ...(setup.isRoaming ? [['roaming', '打开数据漫游']] : []),
-    ...(setup.apnType === 'manual' ? [['apn', `按指引填写 APN：${setup.apnValue || '以套餐提供的值为准'}`]] : []),
+    ['line', '确保 eSIM 已开启', '转到“蜂窝网络”，选择这张旅行 eSIM 并启用“打开此号码”。'],
+    ['data', '选择用于数据的 eSIM', '将蜂窝数据切换到新的 eSIM，并关闭蜂窝数据切换，避免其他线路使用数据流量。'],
+    ...(setup.apnType === 'manual' ? [['apn', '添加 APN 详细信息', '复制 APN 后前往系统设置中的“蜂窝数据网络”，添加并确认选中该 APN。']] : []),
+    ...(setup.isRoaming ? [['roaming', '开启数据漫游', '转到“连接 > 移动网络”，然后打开数据漫游。']] : []),
   ];
-  const [checked, setChecked] = useState(() => Object.fromEntries(steps.map(([id]) => [id, false])));
-  const ready = Object.values(checked).every(Boolean);
+  const [openStep, setOpenStep] = useState(steps[0]?.[0] || null);
+  const [checking, setChecking] = useState(false);
+  function copyApn() {
+    navigator.clipboard?.writeText(setup.apnValue || '').catch(() => {});
+    flash('APN 已复制');
+  }
   function connect() {
-    if (!ready) return;
-    updateData((current) => {
-      const next = structuredClone(current);
-      const target = next.esims.find((item) => item.id === selectedEsim.id);
-      if (!target || !['installed', 'ready_to_connect'].includes(target.status)) return current;
-      target.connectionGuideStatus = 'completed';
-      target.status = 'ready_to_connect';
-      return next;
-    });
-    flash('已记录系统设置完成，正在等待套餐状态更新');
-    go('esim-detail', { replace: true });
+    if (checking) return;
+    setChecking(true);
+    window.setTimeout(() => {
+      setChecking(false);
+      flash('正在检查连接状态，请稍后查看结果');
+      go('esim-detail', { replace: true });
+    }, 650);
   }
   return <div className="detail-page connect-page">
     <PageHeader title="连接 eSIM" back={back} rule="FR-009" review={review} onRule={onRule} />
-    <section className="install-hero"><Wifi /><h2>完成连接设置</h2><p>请在手机系统设置中完成页面提示的步骤。HelloTalk 不会读取或修改系统线路。</p></section>
-    {steps.map(([id, label], index) => <label className="connect-step" key={id}><span>{index + 1}</span><strong>{label}</strong><input type="checkbox" checked={Boolean(checked[id])} onChange={() => setChecked((value) => ({ ...value, [id]: !value[id] }))} /></label>)}
-    <section className="quiet-note"><Info /><p>完成设置不等于已经联网；返回详情后可查看套餐的最新状态。</p></section>
-    <footer className="sticky-cta"><span /><button disabled={!ready} onClick={connect}>我已完成系统设置</button></footer>
+    <section className="connect-intro"><div><CheckCircle2 /></div><h2>让我们帮您连接网络</h2><p>请按下方说明在系统设置中完成配置，再检查连接状态。</p></section>
+    <section className="connect-accordion">{steps.map(([id, label, body], index) => {
+      const expanded = openStep === id;
+      return <article className={`connect-step-card ${expanded ? 'expanded' : ''}`} key={id}><button onClick={() => setOpenStep(expanded ? null : id)}><strong>{index + 1}. {label}</strong><ChevronDown /></button>{expanded && <div className="connect-step-body"><p>{body}</p>{id === 'line' && <div className="connect-tip"><Info />为新的 eSIM 选择一个标签，使其区别于设备上的其他线路。</div>}{id === 'data' && <div className="connect-tip"><Info />关闭蜂窝数据切换，以确保其他 SIM 不会使用数据流量。</div>}{id === 'apn' && <><div className="apn-card"><div><span>APN</span><strong>{setup.apnValue || '以套餐提供的值为准'}</strong></div><button aria-label="复制 APN" onClick={copyApn}><Copy /></button></div><button className="settings-button" onClick={() => flash('请在系统设置中添加 APN')}>打开 APN 设置</button></>}{id === 'roaming' && <><div className="connect-tip"><Info />请确认这张 eSIM 已选择用于蜂窝数据。</div><button className="settings-button" onClick={() => flash('请在系统设置中开启数据漫游')}>打开设置</button></>}</div>}</article>;
+    })}</section>
+    <section className="connection-check"><Wifi /><div><h3>检查你的连接</h3><p>检查结果以当前网络和服务状态同步为准，不会将页面操作视为已完成设置。</p></div></section>
+    <footer className="sticky-cta"><span /><button disabled={checking} onClick={connect}>{checking ? '正在检查...' : '检查连接'}</button></footer>
   </div>;
 }
 
@@ -1727,7 +1894,7 @@ function resolveSupportEsim(data, supportContextEsimId) {
   return supportContextEsimId ? data.esims.find((item) => item.id === supportContextEsimId) || null : null;
 }
 
-function SupportPage({ data, supportContextEsimId, setSupportContextEsimId, setSelectedEsimId, setSupportTopic, setSupportArticleId, setSupportRequestIssue, setSupportRequestSubmitted, go, back, review, onRule }) {
+function SupportPage({ data, supportContextEsimId, setSupportContextEsimId, setSelectedEsimId, setSupportTopic, setSupportArticleId, setSupportRequestIssue, setSupportRequestSubmitted, setSupportRequestId, setSupportRequestDuplicate, go, back, review, onRule }) {
   const esim = resolveSupportEsim(data, supportContextEsimId);
   const sku = esim && currentEsimSku(data, esim);
   const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId);
@@ -1744,6 +1911,8 @@ function SupportPage({ data, supportContextEsimId, setSupportContextEsimId, setS
   }
   function openRequest() {
     setSupportRequestSubmitted(false);
+    setSupportRequestId('');
+    setSupportRequestDuplicate(false);
     go('support-request');
   }
   return <div className="detail-page support-page">
@@ -1771,7 +1940,7 @@ function SupportTopicPage({ supportTopic, setSupportArticleId, go, back, review,
   </div>;
 }
 
-function SupportArticlePage({ data, supportContextEsimId, supportArticleId, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestIssue, setSupportRequestSubmitted, go, back, review, onRule }) {
+function SupportArticlePage({ data, supportContextEsimId, supportArticleId, setSelectedEsimId, setSelectedDestinationId, setCheckoutMode, setTopUpEsimId, setSupportContextEsimId, setSupportRequestIssue, setSupportRequestSubmitted, setSupportRequestId, setSupportRequestDuplicate, go, back, review, onRule }) {
   const topic = SUPPORT_TOPICS.find((item) => item.articles.some((article) => article.id === supportArticleId)) || SUPPORT_TOPICS[0];
   const article = topic.articles.find((item) => item.id === supportArticleId) || topic.articles[0];
   const esim = resolveSupportEsim(data, supportContextEsimId);
@@ -1784,6 +1953,8 @@ function SupportArticlePage({ data, supportContextEsimId, supportArticleId, setS
   function openRequest() {
     setSupportRequestIssue(topic.issue);
     setSupportRequestSubmitted(false);
+    setSupportRequestId('');
+    setSupportRequestDuplicate(false);
     go('support-request');
   }
   function openAction() {
@@ -1854,11 +2025,12 @@ function SupportArticlePage({ data, supportContextEsimId, supportArticleId, setS
   </div>;
 }
 
-function SupportRequestPage({ data, supportContextEsimId, supportRequestIssue, setSupportRequestIssue, supportRequestSubmitted, setSupportRequestSubmitted, go, back, review, onRule }) {
+function SupportRequestPage({ data, updateData, supportContextEsimId, supportRequestIssue, setSupportRequestIssue, supportRequestSubmitted, setSupportRequestSubmitted, supportRequestId, setSupportRequestId, supportRequestDuplicate, setSupportRequestDuplicate, supportRequestSimulation, go, back, review, onRule }) {
   const esim = resolveSupportEsim(data, supportContextEsimId);
   const sku = esim && currentEsimSku(data, esim);
   const destination = sku && data.destinations.find((item) => item.catalogId === sku.catalogId);
   const [description, setDescription] = useState('');
+  const [formState, setFormState] = useState('idle');
   const issues = [
     ['installation', '安装 eSIM'],
     ['connection', '连接与网络'],
@@ -1866,9 +2038,58 @@ function SupportRequestPage({ data, supportContextEsimId, supportRequestIssue, s
     ['payment', '付款、订单或退款'],
     ['compatibility', '设备兼容'],
   ];
+  function hasSensitiveContent(value) {
+    return /(二维码|激活码|SM-DP\+|SM-DP|ICCID|银行卡|卡号|CVV|CVC|\b(?:\d[ -]?){13,19}\b)/i.test(value);
+  }
+  function submitRequest(event) {
+    event.preventDefault();
+    const normalizedDescription = description.trim();
+    if (!normalizedDescription) {
+      setFormState('empty');
+      return;
+    }
+    if (hasSensitiveContent(normalizedDescription)) {
+      setFormState('sensitive');
+      return;
+    }
+    const now = Date.now();
+    const existing = (data.supportRequests || []).find((request) => (
+      request.esimId === (esim?.id || null)
+        && request.issue === supportRequestIssue
+        && request.description === normalizedDescription
+        && now - new Date(request.createdAt).getTime() < 10 * 60 * 1000
+    ));
+    if (existing) {
+      setSupportRequestId(existing.id);
+      setSupportRequestDuplicate(true);
+      setSupportRequestSubmitted(true);
+      return;
+    }
+    setFormState('submitting');
+    window.setTimeout(() => {
+      if (supportRequestSimulation === 'failed') {
+        setFormState('failed');
+        return;
+      }
+      const requestId = `HTS-${Date.now().toString().slice(-8)}`;
+      updateData((current) => ({
+        ...current,
+        supportRequests: [{
+          id: requestId,
+          esimId: esim?.id || null,
+          issue: supportRequestIssue,
+          description: normalizedDescription,
+          createdAt: new Date().toISOString(),
+        }, ...(current.supportRequests || [])],
+      }));
+      setSupportRequestId(requestId);
+      setSupportRequestDuplicate(false);
+      setSupportRequestSubmitted(true);
+    }, 450);
+  }
   if (supportRequestSubmitted) return <div className="detail-page support-request-page">
     <PageHeader title="支持请求" back={back} rule="FR-012" review={review} onRule={onRule} />
-    <section className="support-submitted"><ShieldCheck /><h2>支持请求已记录</h2><p>{esim ? '相关 eSIM 的必要订单信息已随请求附带。' : '已记录你的问题，你可返回商店继续浏览。'}</p><small>我们会通过 HelloTalk 支持团队跟进。</small></section>
+    <section className="support-submitted"><ShieldCheck /><h2>支持请求已记录</h2><p>{supportRequestDuplicate ? '已记录相同问题，请等待支持团队跟进。' : (esim ? '相关 eSIM 的必要订单信息已随请求附带。' : '已记录你的问题，你可返回商店继续浏览。')}</p>{supportRequestId && <strong className="support-request-id">请求编号：{supportRequestId}</strong>}<small>我们会通过 HelloTalk 支持团队跟进。</small></section>
     <button className="primary-action full" onClick={() => go(esim ? 'esim-detail' : 'store', { replace: true })}>{esim ? '返回我的 eSIM' : '返回商店'}</button>
     <button className="text-action support-store-link" onClick={() => go('support', { replace: true })}>返回帮助与支持</button>
   </div>;
@@ -1876,11 +2097,15 @@ function SupportRequestPage({ data, supportContextEsimId, supportRequestIssue, s
     <PageHeader title="联系支持" back={back} rule="FR-012" review={review} onRule={onRule} />
     <section className="support-intro compact"><h2>告诉我们遇到的问题</h2><p>不要填写银行卡信息、二维码、激活码或其他安装敏感内容。</p></section>
     {esim && <section className="support-request-context"><span>{destination?.flag || '🌐'}</span><div><strong>{destination?.name || '旅行'} eSIM</strong><small>{sku ? skuLabel(sku) : '当前 eSIM'} · {isDelivered(esim) ? statusLabel(esim.status, esim.usageStatus) : deliveryLabel(esim.fulfillmentStatus)}</small></div><ShieldCheck /></section>}
-    <form className="support-form" onSubmit={(event) => { event.preventDefault(); if (description.trim()) setSupportRequestSubmitted(true); }}>
+    <form className="support-form" onSubmit={submitRequest}>
       <label>问题类型<select value={supportRequestIssue} onChange={(event) => setSupportRequestIssue(event.target.value)}>{issues.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-      <label>问题描述<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="请描述你看到的情况、目的地和已尝试的步骤。" maxLength="500" /></label>
+      <label>问题描述<textarea value={description} onBlur={() => { if (!description.trim()) setFormState('empty'); }} onChange={(event) => { setDescription(event.target.value); setFormState('idle'); }} placeholder="请描述你看到的情况、目的地和已尝试的步骤。" maxLength="500" /></label>
       <small>内部订单和 eSIM 上下文会自动附带；不会显示或提交敏感安装信息。</small>
-      <button className="primary-action" type="submit" disabled={!description.trim()}>提交支持请求</button>
+      {formState === 'empty' && <p className="support-form-status error">请填写问题描述后提交。</p>}
+      {formState === 'sensitive' && <p className="support-form-status error">内容包含敏感安装或支付信息，请删除后再提交。</p>}
+      {formState === 'failed' && <p className="support-form-status error">暂时无法提交支持请求，请稍后重试。</p>}
+      {formState === 'submitting' && <p className="support-form-status">正在提交支持请求，请勿重复操作。</p>}
+      <button className="primary-action" type="submit" disabled={formState === 'submitting'}>{formState === 'failed' ? '重新提交' : '提交支持请求'}</button>
     </form>
   </div>;
 }

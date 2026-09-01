@@ -188,6 +188,7 @@ export const defaultData = {
   ],
   orders: [],
   esims: [],
+  supportRequests: [],
   settings: {
     homeCards: [
       { id: 'stay-connected', title: '出境也能保持连接', copy: '用目的地流量处理导航、沟通和日常出行需求。', enabled: true, theme: 'sun' },
@@ -225,6 +226,7 @@ export function hydrateData(storedData) {
   const storedSettings = storedData.settings || {};
   const storedOrders = Array.isArray(storedData.orders) ? storedData.orders : [];
   const storedEsims = Array.isArray(storedData.esims) ? storedData.esims : [];
+  const storedSupportRequests = Array.isArray(storedData.supportRequests) ? storedData.supportRequests : [];
   const platform = storedProfile.platform || defaults.profile.platform;
   const deviceModel = typeof storedProfile.deviceModel === 'string' && storedProfile.deviceModel.trim()
     ? storedProfile.deviceModel.trim()
@@ -313,6 +315,7 @@ export function hydrateData(storedData) {
         providerOrderId: esim.providerOrderId || storedOrders.find((order) => order.id === esim.orderId)?.providerOrderId || null,
         fulfillmentStatus: normalizeFulfillmentStatus(esim.fulfillmentStatus, 'purchase'),
         installGuideStatus: esim.installGuideStatus || (esim.status === 'installed' ? 'completed' : 'not_requested'),
+        installFlowState: esim.installFlowState || (esim.status === 'installed' ? 'complete' : 'idle'),
         connectionGuideStatus: esim.connectionGuideStatus || 'not_started',
         usageStatus: esim.usageStatus || legacyUsageStatus(esim.status),
         installationMethods: Array.isArray(esim.installationMethods) ? esim.installationMethods : ['qr', 'manual'],
@@ -320,6 +323,15 @@ export function hydrateData(storedData) {
         topUpHistory: Array.isArray(esim.topUpHistory) ? esim.topUpHistory : [],
       }))
       : defaults.esims,
+    supportRequests: storedSupportRequests
+      .filter((request) => request && typeof request.id === 'string' && typeof request.description === 'string')
+      .map((request) => ({
+        id: request.id,
+        esimId: typeof request.esimId === 'string' ? request.esimId : null,
+        issue: typeof request.issue === 'string' ? request.issue : 'installation',
+        description: request.description,
+        createdAt: request.createdAt || new Date(0).toISOString(),
+      })),
   };
 }
 
